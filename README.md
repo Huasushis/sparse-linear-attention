@@ -8,8 +8,8 @@
 
 - 网站内容位于 [`book/`](book/)；导航配置在 [`mkdocs.yml`](mkdocs.yml)。
 - 从 [`book/index.md`](book/index.md) 或 [`book/00-how-to-use.md`](book/00-how-to-use.md) 开始。
-- 研究任务表、73 篇分级阅读图和长版模板仍保留在 [`study/`](study/)。
-- 原始、已分类的 73 篇 BibTeX 位于 [`references/attention.bib`](references/attention.bib)。
+- 研究任务表、74 篇分级阅读图和长版模板仍保留在 [`study/`](study/)。
+- 已分类的 74 篇 BibTeX 位于 [`references/attention.bib`](references/attention.bib)。
 
 ## 本地构建在线书
 

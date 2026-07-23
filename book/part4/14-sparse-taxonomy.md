@@ -7,7 +7,7 @@ attention 的 query-key-value 结构，但让每个 query **只看一部分 key*
 1. **算法问题：** 哪些配对应该保留？谁来决定？会损失什么？
 2. **系统问题：** 保留的配对能否被 GPU 真正高效执行？选择和索引本身花了多少时间？
 
-如果只说“稀疏率 90%”，这两个问题一个也没有回答。本章给 73 篇文献建立一个可操作的
+如果只说“稀疏率 90%”，这两个问题一个也没有回答。本章给 74 篇文献建立一个可操作的
 分类，不要求你把每篇都精读或复现。
 
 ## 学习目标
@@ -18,7 +18,7 @@ attention 的 query-key-value 结构，但让每个 query **只看一部分 key*
 2. 区分固定结构、内容路由、KV cache、可训练 block sparse 和通用 sparse kernel；
 3. 区分 prefill sparse 与 decode/KV sparse；
 4. 解释“理论少算”为什么不等于“GPU 更快”；
-5. 把你的 73 篇文献放入阅读优先级，而不是按年份背摘要；
+5. 把你的 74 篇文献放入阅读优先级，而不是按年份背摘要；
 6. 为一个新 sparse 论文写出它的选择成本和执行成本。
 
 ## 14.1 从一个 mask 开始
@@ -179,7 +179,7 @@ design 和 end-to-end training 放在一起。它适合作为“算法和 kernel
 训练地加速多种模型 inference。它很适合做“filter 近似误差与端到端速度如何共同报告”的
 案例，但需额外核对所依赖的量化/基础 attention backend 与目标模型是否一致。
 
-## 14.8 先读哪一些，而不是 73 篇全读
+## 14.8 先读哪一些，而不是 74 篇全读
 
 当前阶段建议采用一条主线和两条横向线：
 
@@ -193,7 +193,7 @@ serving 横线：StreamingLLM/H2O -> QUEST 或 SparQ -> LServe
 
 - **慢读（A）**：MInference、NSA、MoBA、SpargeAttention、FlexAttention、FlashInfer；
 - **重点略读（B）**：Longformer、BigBird、StreamingLLM、H2O、QUEST、SparQ、LServe、
-  SeerAttention、XAttention、AdaSplash；
+  SeerAttention、XAttention、AdaSplash、HiLS-Attention；
 - **脉络浏览（C）**：更早的 accelerator、其余 selector、量化/视频分支和后续版本。
 
 这不是“论文重要性排名”，而是与你现在的算法+kernel 目标相匹配的学习顺序。
@@ -212,6 +212,51 @@ serving 横线：StreamingLLM/H2O -> QUEST 或 SparQ -> LServe
 
 若其中两项不能回答，不是你读得慢，而是论文/代码/图表还没被定位到。先标为“待核对”，
 不要脑补。
+
+### 教师示范：怎样把 HiLS-Attention 放进地图
+
+[HiLS-Attention](https://arxiv.org/abs/2607.02980) 的“hierarchical”首先指两级归一化，而不是
+沿一棵树递归检索。它为每个 chunk 学一个压缩 key 与 entropy bias：
+
+$$
+\mathbf{k}'_c=\sum_{j\in c}p_j\mathbf{k}_j,\qquad
+b'_c=-\sum_{j\in c}p_j\log p_j,
+$$
+
+再用
+
+$$
+\hat{s}_{i,c}=\frac{\mathbf{q}_i^\top\mathbf{k}'_c}{\sqrt d}+b'_c
+$$
+
+估计该 chunk 的 LogSumExp mass。关键不只是拿它做 top-k：被选 chunk 内先做 intra-chunk
+softmax，chunk 之间再按 $\exp(\hat{s}_{i,c})$ 分配总 mass。路由分数因此进入最终输出，LM loss
+可以训练 landmark summary；这正是它与“算一个 proxy、选完便结束”的方法的主要区别。
+这里的“端到端”也要加限定：被选 chunk 的 surrogate mass 参与前向并得到 LM loss 梯度，
+但 hard top-k 仍是不连续选择，未选 chunk 不会获得与被选 chunk 相同的平滑梯度。
+
+| 七问 | 教师定位版答案 | 仍需核对的边界 |
+| --- | --- | --- |
+| 阶段 | 支持从头训练、continued pretraining，也报告 prefill/decode | 不同路径用的模型、权重和 kernel 是否相同 |
+| 可见性 | 每个 query 动态选 top-k chunk；GQA 内多个 query head 合并 score 后共享集合 | 合并是否损失个别 head 的召回 |
+| 粒度 | 论文速度实验用 64-token chunk、top-k 32，再加 512-token local window | 这是实验配置，不是对所有模型都最优的常数 |
+| selector | landmark query 产生 $(\mathbf{k}'_c,b'_c)$；每个 token 对所有 chunk summary 路由 | 总路由仍是 $O(N^2/S)$，只是相对 token-level full QK 缩小约 $S$ 倍 |
+| 执行 | 相邻 $M$ 个 query 取所选 chunk 的并集，一次加载、多 query 复用；主仓库有 TileLang fwd/bwd 与 Triton HSA 代码，serving 在独立 SGLang fork | 并集扩大后的无效 query-chunk 对、selector 和 gather 必须计时 |
+| 质量 | 可从头训练，也可用 landmark/Q-Cal 少量参数 continued training；最长报告到 4M | “toward infinite”不是无限复杂度证明，也不是任意长度质量保证 |
+| 证据 | 单张 H800、bf16、batch 1、345M；与同一 Triton 基础设施上的 full attention 比，约 16K 交叉，512K 报告 13.5x prefill、15.7x decode | 这些是作者结果；full baseline 不是厂商优化 paged attention，尚未由本教程独立复跑 |
+
+这里最值得学习的 kernel 问题是：NSA 主要靠较大的 GQA group 填满 Tensor Core 的一个维度，
+HiLS 则同时打包相邻 query token 与 query head，使 $M\times G\ge 16$，并利用相邻 query 的 chunk
+重叠复用 K/V。算法的选择规律由此直接变成了 kernel 的数据复用假设。
+
+!!! note "为什么加入教程，但暂不新建必做 Lab"
+    [官方仓库](https://github.com/Tencent-Hunyuan/HiLS-Attention/tree/a48357138aa292c3678afb96eacdfbb820d2b487)
+    已经包含训练、评测、算子测试，并链接了[独立 SGLang 后端](https://github.com/alexzms/SGLang-HiLS)，
+    研究价值足够；但截至
+    2026-07-23，它要求 Python 3.11、PyTorch 2.8/cu128、固定 TileLang/VeOmni 等依赖，完整
+    7B serving 还需要权重与另一个 SGLang fork，且仓库没有明确许可证。当前先按 **B 级**完成
+    独立七问卡。只有在隔离环境里固定 commit、跑通小张量 fwd/bwd correctness、selector 与
+    attention 分项计时后，才升为 A1；不要把下载 7B 权重或复现 4M 上下文当入门作业。
 
 ## 14.10 最小实践：固定 block mask 的 reference
 
@@ -288,7 +333,7 @@ prefill 有很多 query 可并行，decode 常只有一个新 query 且带宽受
 本章的代表键包括 `child2019sparse`、`beltagy2020longformer`、`zaheer2020bigbird`、
 `kitaev2020reformer`、`pagliardini2023dynamic`、`xiao2024streamingllm`、`zhang2023h2o`、
 `jiang2024minference`、`yuan2025native`、`lu2025moba`、`zhang2025spargeattention`、
-`dong2025flexattention` 与 `ye2025flashinfer`。完整来源见仓库根目录的
+`hu2026hils`、`dong2025flexattention` 与 `ye2025flashinfer`。完整来源见仓库根目录的
 `references/attention.bib`。
 
 下一章会把第二个问题放大：同样的 mask，为什么可能在一种 kernel 上很快、在另一种实现

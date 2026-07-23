@@ -23,7 +23,8 @@
 - Yang et al., [Gated Linear Attention](https://arxiv.org/abs/2312.06635)、[DeltaNet](https://arxiv.org/abs/2406.06484)、[Gated Delta Networks](https://arxiv.org/abs/2412.06464)。
 - Dao & Gu, [Transformers are SSMs / Mamba-2](https://arxiv.org/abs/2405.21060)。
 - Kimi Team, [Kimi Linear](https://arxiv.org/abs/2510.26692)。
+- Hu et al., [HiLS-Attention](https://arxiv.org/abs/2607.02980)：近期 sparse algorithm/kernel 观察案例；先按 B 级阅读。
 
-完整的 73 篇原始 BibTeX 在仓库根目录的 `references/attention.bib`。按优先级标注的
+完整的 74 篇 BibTeX 在仓库根目录的 `references/attention.bib`。按优先级标注的
 [阅读图](paper-map.md)从 `study/PAPER_MAP.md` 单一来源嵌入本站，因此网站与研究文件不会
 维护两份相互漂移的副本。

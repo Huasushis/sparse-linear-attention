@@ -107,7 +107,7 @@ nav:
   - 附录:
       - 研究路线与交付物: appendix/research-plan.md
       - 可勾选研究任务表: appendix/task-board.md
-      - 73 篇论文阅读图: appendix/paper-map.md
+      - 74 篇论文阅读图: appendix/paper-map.md
       - Slurm 与远程协作: appendix/slurm-and-git.md
       - 代码目录说明: appendix/code-guide.md
       - 资料与引用: appendix/sources.md

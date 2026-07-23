@@ -1,6 +1,6 @@
 # 第 16 章：从阅读到可复核复现——你的研究路线与交付物
 
-你现在不需要“把 73 篇论文读完”，也不需要“复现一个 48B 模型”。真正的目标是逐步建立一种
+你现在不需要“把 74 篇论文读完”，也不需要“复现一个 48B 模型”。真正的目标是逐步建立一种
 研究能力：看到一个 attention 论文时，能把它拆成可验证的公式、代码、性能和质量主张；
 看到一个速度数字时，能判断它是否回答了你的问题。
 
@@ -141,16 +141,18 @@ sparse kernel 项目做 R2/R3。
 
 ## 16.4 A/B/C 论文要读到什么程度
 
-你已有的 73 篇分类不应被扔掉。把它们转成三种阅读速度：
+你已有的 74 篇分类不应被扔掉。把它们转成三种阅读速度：
 
 | 级别 | 目标 | 阅读动作 | 当前代表 |
 | --- | --- | --- | --- |
 | A：慢读 | 可讲清、可写 reference/复现卡 | 摘要/图/公式/算法/实现/实验设置都读；至少一项 R1/R2/R3 | FlashAttention、GLA、DeltaNet、GDN、Kimi、FlexAttention、FlashInfer、MInference、NSA、MoBA、SpargeAttention |
-| B：重点略读 | 建立分类和比较能力 | 摘要、图 1、方法图、实验设置/结论；写七问卡 | Longformer、BigBird、StreamingLLM、H2O、QUEST、SparQ、LServe、SeerAttention、XAttention、AdaSplash |
+| B：重点略读 | 建立分类和比较能力 | 摘要、图 1、方法图、实验设置/结论；写七问卡 | Longformer、BigBird、StreamingLLM、H2O、QUEST、SparQ、LServe、SeerAttention、XAttention、AdaSplash、HiLS-Attention |
 | C：脉络浏览 | 知道历史分支和边界 | 摘要 + 贡献 + 它属于哪类；不强求公式 | 早期 accelerator、其余 selector、量化与视频分支 |
 
 一篇论文可从 B 升为 A。例如你若选择“dynamic block selector 的 kernel 开销”为课题，
 MInference、MoBA、NSA、SpargeAttention 中相关的一篇就必须升为 A；其他依旧 B。
+HiLS-Attention 同样遵循这个规则：先用第 14 章的教师示范建立位置；只有在你的选题落到
+learned chunk selector、query packing 或 native sparse training，并跑通独立算子证据后才升 A1。
 
 ## 16.5 每篇论文的三遍读法
 
@@ -222,7 +224,7 @@ assignment -> index construction -> sparse prefill kernel -> 1M prefill 图”�
 | --- | --- | --- | --- |
 | KDA/GDN kernel | channel gate 的实际 overhead 在何种 shape 出现？ | FLA KDA/GDN，scalarization + op benchmark | 同 GPU 的曲线与误差表 |
 | structured sparse | 哪种 block/window 密度能越过 dense baseline？ | fixed-mask reference、FlexAttention 或可用 kernel | density/latency crossover 图 |
-| dynamic selector | selector 是否吞掉 sparse kernel 的收益？ | MInference/MoBA 类流程的简化版本 | selector 与 attention 分项计时 |
+| dynamic selector | selector 是否吞掉 sparse kernel 的收益？ | MInference/MoBA/HiLS 类流程的简化版本 | selector 与 attention 分项计时 |
 | KV serving | 某 cache policy 如何改变 TPOT 与质量？ | StreamingLLM/H2O/QUEST 一条线 | 固定请求下的 TTFT/TPOT/质量表 |
 
 先选择你能获得的代码、GPU 和模型权重所支持的一项。研究问题应由可验证资源约束，而不是
@@ -297,7 +299,7 @@ checkpoint、Hugging Face cache、编译产物和大数据只留在用户目录/
 8. 一个可证伪的后续优化问题 + L0--L3 实验设计
 ```
 
-这些比“读过 73 篇”更有价值：它们能被导师检查、能被未来的你复跑，也能自然拼成调研与
+这些比“读过 74 篇”更有价值：它们能被导师检查、能被未来的你复跑，也能自然拼成调研与
 复现报告的初稿。
 
 ## 常见误区

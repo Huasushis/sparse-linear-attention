@@ -56,6 +56,7 @@
 - [ ] 对 Longformer、BigBird、Reformer 做结构化阅读；自己画出 local/global/random/LSH 等模式。
 - [ ] 区分静态稀疏、内容自适应稀疏、KV-cache 选择和训练可学习稀疏。
 - [ ] 精读 MInference；从 Native Sparse Attention、MoBA、SpargeAttention 中只选一个升级精读与复现。
+- [ ] 不看教师示范，先独立为 HiLS-Attention 写七问卡，再与第 14 章核对；至少指出一个作者结论的适用边界。此项不要求下载 7B 权重或复现 4M 上下文。
 - [ ] 对一个掩码模式做 L1 reference，并相对 dense attention 测数值/质量代理与速度。
 
 **通过条件：** 能说明稀疏率、实际 speedup 和模型质量不是同一指标；能解释一个方法的选择开销是否吃掉收益。

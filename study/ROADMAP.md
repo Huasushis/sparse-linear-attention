@@ -2,7 +2,7 @@
 
 ## 终点与优先级
 
-最终目标是一个可复核的 sparse / linear attention 调研与复现报告，而不是 73 篇论文的逐篇摘要。主线优先级为：
+最终目标是一个可复核的 sparse / linear attention 调研与复现报告，而不是 74 篇论文的逐篇摘要。主线优先级为：
 
 ```
 前置概念 → dense / FlashAttention 基线 → linear 算法 → linear kernel

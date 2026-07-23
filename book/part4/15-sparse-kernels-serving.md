@@ -164,7 +164,7 @@ FlashInfer 的摘要强调 block-sparse/composable KV-cache format、JIT attenti
 因此读 FlashInfer 时重点问它如何处理“异质请求”和“静态 CUDA Graph 约束”，而不只是记
 某个 kernel 加速百分比。
 
-### MInference / NSA / MoBA / SpargeAttention：四种研究取舍
+### MInference / NSA / MoBA / SpargeAttention / HiLS：五种研究取舍
 
 | 方法 | 从哪层切入 | 你应该重点审查 |
 | --- | --- | --- |
@@ -172,8 +172,14 @@ FlashInfer 的摘要强调 block-sparse/composable KV-cache format、JIT attenti
 | NSA | 可训练、分层动态 sparse + hardware alignment | block/压缩设计、fwd/bwd/decode 是否都报告 |
 | MoBA | attention block router | router 的选择单位、top-k/block layout、模型质量 |
 | SpargeAttention | online filter + softmax-aware skip | filter 本身成本、误差、基础量化 kernel 的影响 |
+| HiLS-Attention | 可训练 chunk-mass router + hierarchical softmax | 路由的 $O(N^2/S)$ 成本、相邻 query 并集膨胀、fwd/bwd 与 SGLang 是否同语义 |
 
 它们都可能被称为“sparse attention”，但需要的复现证据完全不同。
+
+HiLS 的 kernel 设计把“相邻 query 常选到相同 chunk”变成 one-load-multiple-compute：对 $M$ 个
+相邻 query 取 chunk 并集，将 Tensor Core 左矩阵从近似 $(G,d)$ 扩为 $(M\times G,d)$。这既可能
+提高利用率和 K/V 复用，也可能因并集带来额外无效计算。复现时至少分别记录 selector、并集后
+实际 chunk 数、sparse attention kernel 与端到端 latency，不能只引用目标 top-k。
 
 ## 15.7 一个可靠的 benchmark 阶梯
 
@@ -293,7 +299,7 @@ batch、阶段、baseline、是否含 selector、质量条件逐项抄出。任�
 - `dao2022flashattention`、`dao2024flashattention2`：exact dense IO-aware baseline；
 - `dong2025flexattention`：由高层 attention 变体生成 fused kernel；
 - `ye2025flashinfer`：KV cache format、JIT template 与 serving scheduling；
-- `jiang2024minference`、`yuan2025native`、`lu2025moba`、`zhang2025spargeattention`：当前
+- `jiang2024minference`、`yuan2025native`、`lu2025moba`、`zhang2025spargeattention`、`hu2026hils`：当前
   sparse 算法与 kernel/serving 的重点案例。
 
 完整条目见仓库根目录的 `references/attention.bib`。

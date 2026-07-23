@@ -5,7 +5,7 @@
 | 你现在想做什么 | 先看什么 |
 | --- | --- |
 | 不知道整条路线长什么样 | [总路线](ROADMAP.md) |
-| 不知道 73 篇怎么取舍 | [论文阅读图](PAPER_MAP.md) |
+| 不知道 74 篇怎么取舍 | [论文阅读图](PAPER_MAP.md) |
 | 不明白“复现”究竟要交什么 | [复现规范](REPRODUCTION.md) |
 | 不知道 benchmark 该量什么 | [Benchmark 规范](BENCHMARK.md) |
 | 看完一篇论文后怎么留下成果 | [论文笔记模板](templates/paper-note.md) |

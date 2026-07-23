@@ -76,7 +76,7 @@
 5. **关卡 E，sparse 主线：** 第 14--16 章和 Lab 7；先做 structured sparse oracle，
    再从 NSA/MoBA/SpargeAttention 中只选一个现代方法升级复现。
 
-每个关卡的可勾选任务和交付物在[研究路线与交付物](appendix/research-plan.md)；73 篇论文的
+每个关卡的可勾选任务和交付物在[研究路线与交付物](appendix/research-plan.md)；74 篇论文的
 A0/A1/B/C 阅读层级在[论文阅读图](appendix/paper-map.md)。
 
 !!! warning "不要把大模型训练当作第一项作业"

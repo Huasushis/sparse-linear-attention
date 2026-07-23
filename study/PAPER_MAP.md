@@ -1,4 +1,4 @@
-# 73 篇论文阅读图：分层，而非平均用力
+# 74 篇论文阅读图：分层，而非平均用力
 
 ## 如何使用本表
 
@@ -8,7 +8,7 @@
 - **C（脉络浏览）**：摘要与一张代表图；记录它属于哪个篮子、解决什么问题。
 - 标签：`ALG` 算法，`KER` kernel，`SYS` serving/系统，`TRAIN` 训练/架构，`DIST` 分布式，`QUANT` 量化，`VISION` 视觉/视频，`BASE` dense 基线。
 
-阅读顺序由[总路线](https://github.com/Huasushis/sparse-linear-attention/blob/main/study/ROADMAP.md)决定，不由表中编号决定。共有 **8 篇 A0、7 篇 A1、25 篇 B、33 篇 C**；这是为了避免初期同时啃 15 篇精读论文。
+阅读顺序由[总路线](https://github.com/Huasushis/sparse-linear-attention/blob/main/study/ROADMAP.md)决定，不由表中编号决定。共有 **8 篇 A0、7 篇 A1、26 篇 B、33 篇 C**；这是为了避免初期同时啃 15 篇精读论文。
 
 ## 1. Linear attention：基础与现代架构（12 篇）
 
@@ -68,7 +68,7 @@
 | `lee2024infinigen` | InfiniGen | C | SYS | dynamic KV cache management |
 | `yang2025lserve` | LServe | B | SYS, KER | unified sparse attention 的 serving 视角 |
 
-## 5. Sparse attention：长上下文 LLM（19 篇）
+## 5. Sparse attention：长上下文 LLM（20 篇）
 
 | Key | 简称 | 层级 | 标签 | 本阶段要看什么 |
 | --- | --- | --- | --- | --- |
@@ -86,6 +86,7 @@
 | `xiao2025duoattention` | DuoAttention | B | SYS | retrieval / streaming head 分类 |
 | `lai2025flexprefill` | FlexPrefill | B | ALG, SYS | context-aware prefill 选择 |
 | `yuan2025native` | Native Sparse Attention | A1 | ALG, KER, TRAIN | 与 MoBA/Sparge 三选一升级精读；hardware-aligned block sparse、可训练性 |
+| `hu2026hils` | HiLS-Attention | B | ALG, KER, SYS, TRAIN | 分层 chunk mass、端到端 selector 与相邻 query packing；先做七问卡，独立跑通算子后再考虑升 A1 |
 | `gao2025seerattention` | SeerAttention | B | ALG, TRAIN | self-distilled attention gating |
 | `lu2025moba` | MoBA | A1 | ALG, KER, TRAIN | 与 NSA/Sparge 三选一升级精读；FLA 有实现接口 |
 | `acharya2025starattention` | Star Attention | B | SYS | 分块/分布式推理思路 |
@@ -129,3 +130,5 @@
 5. MInference、Native Sparse Attention、MoBA、SpargeAttention 中根据代码、GPU 和模型权重可得性选 **一个** 做小范围 serving / operator 复现。
 
 Kimi Linear 是重点案例，但初期以读架构、查看 FLA 实现、做算子级验证为目标；完整训练或最大模型 benchmark 不作为本科入门阶段的完成条件。
+
+HiLS-Attention 是 2026-07 的近期观察项：论文与训练/算子/serving 代码都值得跟踪，但发布尚新、完整环境较重，且仓库当前未声明许可证。它暂不进入核心复现池；只有在固定 commit 的独立环境中跑通 selector、forward/backward correctness 和小型 benchmark 后，才从 B 升为 A1。
