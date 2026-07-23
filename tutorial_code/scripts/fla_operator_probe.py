@@ -9,7 +9,8 @@ import torch
 import torch.nn.functional as F
 
 from fla.ops.gated_delta_rule import fused_recurrent_gated_delta_rule, naive_recurrent_gated_delta_rule
-from fla.ops.kda import fused_recurrent_kda, naive_recurrent_kda
+from fla.ops.kda import fused_recurrent_kda
+from fla.ops.kda.naive import naive_recurrent_kda
 
 
 def max_error(actual: torch.Tensor, expected: torch.Tensor) -> float:
