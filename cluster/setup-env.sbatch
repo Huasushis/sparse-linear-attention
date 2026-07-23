@@ -15,6 +15,7 @@
 
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:?submit this script from the repository root}"
+cd .
 : "${TORCH_INDEX_URL:?set TORCH_INDEX_URL only after reading the discovery job}"
 
 SLA_ENV="${SLA_ENV:-${SLA_VENV:-$HOME/sparse_linear/.envs/sla-tutorial-py312}}"
@@ -34,6 +35,11 @@ if [[ ! -x "$SLA_ENV/bin/python" ]]; then
     "$CONDA_EXE" create --yes --prefix "$SLA_ENV" --override-channels --channel conda-forge python=3.12 pip
 fi
 export PATH="$SLA_ENV/bin:$PATH"
+JOB_TMP="${SLURM_TMPDIR:-/tmp/sla-${USER}-${SLURM_JOB_ID}}"
+mkdir -p "$JOB_TMP/pip-cache"
+export TMPDIR="$JOB_TMP"
+export PIP_CACHE_DIR="$JOB_TMP/pip-cache"
+echo "job_tmp=$JOB_TMP"
 
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install --index-url "$TORCH_INDEX_URL" "torch>=2.7"
