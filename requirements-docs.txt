@@ -1,0 +1,2 @@
+# Book site only. Install in a dedicated environment, not your model-training environment.
+mkdocs-material>=9.6,<10

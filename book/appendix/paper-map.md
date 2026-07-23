@@ -1,0 +1,1 @@
+--8<-- "study/PAPER_MAP.md"

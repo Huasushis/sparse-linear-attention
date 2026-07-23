@@ -1,0 +1,3 @@
+# The tutorial code needs PyTorch. Choose a CUDA-compatible PyTorch build *after*
+# seeing the allocated GPU node; do not blindly install a wheel from this file.
+pytest>=7,<9

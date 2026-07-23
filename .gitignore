@@ -1,0 +1,33 @@
+# Python and editor state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+.venv-docs/
+.docs-deps/
+site/
+venv/
+.idea/
+.vscode/
+
+# Local data, model weights, and generated experiment artifacts
+artifacts/
+outputs/
+results/
+logs/
+checkpoints/
+data/
+wandb/
+mlruns/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Keep authored notes and small CSV/JSON summaries; ignore profiler dumps
+*.nsys-rep
+*.qdrep
+*.sqlite

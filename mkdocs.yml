@@ -1,0 +1,112 @@
+site_name: Sparse & Linear Attention 研究手册
+site_description: 从 Transformer 基础、GPU kernel 到 sparse / linear attention 复现的中文实践教程
+site_url: https://huasushis.github.io/sparse-linear-attention/
+docs_dir: book
+repo_name: Huasushis/sparse-linear-attention
+repo_url: https://github.com/Huasushis/sparse-linear-attention
+edit_uri: edit/main/
+
+theme:
+  name: material
+  language: zh
+  font: false
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: 切换到浅色模式
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+
+plugins:
+  - search:
+      lang: [zh, en]
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets:
+      base_path: .
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_css:
+  - stylesheets/extra.css
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - 首页: index.md
+  - 使用这本书: 00-how-to-use.md
+  - 第一部：把 Transformer 变成可操作的对象:
+      - 记号与形状: appendix/notation.md
+      - 1. 从张量理解 Transformer: part1/01-transformer-from-tensors.md
+      - 2. 训练最小闭环: part1/02-training-minimum.md
+      - 3. RNN、状态与 scan: part1/03-rnn-state-and-scan.md
+      - 4. 必要的数学工具: part1/04-math-toolkit.md
+  - 第二部：GPU 与 dense attention:
+      - 5. GPU 性能心智模型: part2/05-gpu-mental-model.md
+      - 6. 怎样做可信 benchmark: part2/06-benchmarking-gpu.md
+      - 7. Dense attention reference: part2/07-dense-attention.md
+      - 8. FlashAttention: part2/08-flashattention.md
+      - 9. 第一段 Triton kernel: part2/09-triton-first-kernel.md
+  - 第三部：Linear attention:
+      - 10. 从核技巧到 recurrent state: part3/10-linear-attention.md
+      - 11. Gating、Delta rule 与 GDN: part3/11-gating-delta-gdn.md
+      - 12. Kimi KDA 与 GDN：重合与差异: part3/12-kimi-kda-vs-gdn.md
+      - 13. 读 FLA：从 layer 到 kernel: part3/13-fla-code-map.md
+  - 第四部：Sparse attention:
+      - 14. 稀疏方法分类学: part4/14-sparse-taxonomy.md
+      - 15. Sparse kernel 与 serving: part4/15-sparse-kernels-serving.md
+      - 16. 从论文到复现卡: part4/16-reading-and-reproduction-path.md
+  - Labs:
+      - Lab 0. 环境与可复跑记录: labs/00-environment.md
+      - Lab 1. Dense attention reference: labs/01-dense-attention.md
+      - Lab 2. Linear attention 三种形式: labs/02-linear-attention.md
+      - Lab 3. GDN 与 KDA 等价实验: labs/03-gdn-kda.md
+      - Lab 4. GPU benchmark: labs/04-gpu-benchmark.md
+      - Lab 5. Triton 起步: labs/05-triton.md
+      - Lab 6. 107 上的 FLA smoke test: labs/06-fla-on-107.md
+      - Lab 7. Sparse mask 与 operator: labs/07-sparse-mask.md
+  - 附录:
+      - 研究路线与交付物: appendix/research-plan.md
+      - 可勾选研究任务表: appendix/task-board.md
+      - 73 篇论文阅读图: appendix/paper-map.md
+      - Slurm 与远程协作: appendix/slurm-and-git.md
+      - 代码目录说明: appendix/code-guide.md
+      - 资料与引用: appendix/sources.md
