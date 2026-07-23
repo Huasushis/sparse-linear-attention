@@ -31,7 +31,7 @@ fi
 
 mkdir -p "$(dirname "$SLA_ENV")" artifacts
 if [[ ! -x "$SLA_ENV/bin/python" ]]; then
-    "$CONDA_EXE" create --yes --prefix "$SLA_ENV" python=3.12 pip
+    "$CONDA_EXE" create --yes --prefix "$SLA_ENV" --override-channels --channel conda-forge python=3.12 pip
 fi
 export PATH="$SLA_ENV/bin:$PATH"
 
