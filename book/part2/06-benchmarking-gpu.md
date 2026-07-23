@@ -323,6 +323,8 @@ prof.export_chrome_trace("artifacts/attention-trace.json")
 - input shape / memory：是否意外走了另一种 shape 或产生大临时量。
 
 `Self` 与 `total` 不能相加。父 range 的 total 会包含子 op；把每行 total 求和会重复计算。
+用户定义的 range 也可能分别以 host annotation 与关联的 device 时间出现在聚合表中；它是
+层级边界，不是又执行了一个同名 kernel。判断 kernel 数应看具体 CUDA kernel 行/时间线。
 `record_shapes=True`、`profile_memory=True`、`with_stack=True` 都会增加开销并可能延长 tensor
 寿命，尤其 `with_stack` 只在确实要找 Python 调用点时开启。
 

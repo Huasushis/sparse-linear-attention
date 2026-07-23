@@ -98,6 +98,7 @@ def main() -> None:
             record_shapes=True,
             profile_memory=True,
             with_stack=args.with_stack,
+            acc_events=True,
         ) as prof:
             for _ in range(args.steps):
                 with record_function("attention_step"):
