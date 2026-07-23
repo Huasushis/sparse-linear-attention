@@ -41,6 +41,7 @@ for tool in nvidia-smi nsys ncu compute-sanitizer nvprof; do
         printf '%-20s %s\n' "$tool" "NOT FOUND"
     fi
 done
+GPU_NAME="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1)"
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 python -m tutorial_code.scripts.environment_report
 
@@ -83,10 +84,18 @@ if [[ "${RUN_NCU:-0}" == "1" ]]; then
         exit 3
     fi
     echo "=== Nsight Compute ==="
+    ncu --version
+    NCU_CHIPS="$(ncu --list-chips)"
+    echo "supported_chips=$NCU_CHIPS"
+    if [[ "$GPU_NAME" == *"RTX 5090"* && "$NCU_CHIPS" != *"gb202"* ]]; then
+        echo "ncu_status=SKIPPED: installed ncu does not list the RTX 5090 gb202 chip"
+        exit 0
+    fi
     ncu \
-        --set basic \
+        --set "${NCU_SET:-default}" \
+        --target-processes all \
         --nvtx \
-        --nvtx-include "attention_step/" \
+        --nvtx-include "sla_attention_step/" \
         --launch-count 1 \
         --page details \
         -o "$JOB_TMP/ncu-attention-${SLURM_JOB_ID}" \

@@ -303,7 +303,6 @@ with profile(
 ) as prof:
     with record_function("attention_step"):
         output = fn()
-    prof.step()
 
 print(prof.key_averages().table(
     sort_by="self_cuda_time_total",
@@ -344,7 +343,7 @@ Chrome trace 的第一遍阅读顺序：
 NVTX 本身不测性能，它给时间线加上人能读懂的 range：
 
 ```python
-torch.cuda.nvtx.range_push("attention_step")
+torch.cuda.nvtx.range_push("sla_attention_step")
 try:
     output = fn()
 finally:
@@ -392,8 +391,9 @@ Nsight Compute 为收集 counter 可能 replay kernel 多次，运行会慢很�
 
 ```bash
 ncu \
-  --set basic \
-  --nvtx --nvtx-include "attention_step/" \
+  --set default \
+  --target-processes all \
+  --nvtx --nvtx-include "sla_attention_step/" \
   --launch-count 1 \
   --page details \
   -o artifacts/ncu-attention-$SLURM_JOB_ID \
@@ -401,7 +401,8 @@ ncu \
     --operator torch_sdpa --mode prefill --seq-len 512 --steps 1
 ```
 
-`attention_step/` 末尾的 `/` 表示 NVTX push/pop range。先用 `--set basic`；只有在形成问题后
+`sla_attention_step/` 末尾的 `/` 表示 NVTX push/pop range。先用当前版本
+`ncu --list-sets` 中启用的基础 set（107 上的 2022.4.1 叫 `default`）；只有在形成问题后
 才增加 section，例如 memory workload、occupancy 或 warp stall。常看的不是“越高越好”
 排行榜，而是一组互相约束的证据：
 
@@ -417,6 +418,8 @@ ncu \
 occupancy 不是目标函数。一个低 occupancy、复用很好的 kernel 可能比高 occupancy 版本快；
 最终仍回到未插桩的 latency。若集群禁止读取 GPU performance counters，`ncu` 会报告权限
 错误；普通用户不应尝试绕过，应保留报错并询问管理员是否开放 profiling queue/权限。
+在检查权限前还要先检查版本与 GPU 架构：`ncu --version`、`ncu --list-chips`。可执行文件
+存在但未列出当前 chip 时，更新权限也无济于事。
 
 ### 6.8.7 显存、设备状态与正确性工具
 

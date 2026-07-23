@@ -61,3 +61,7 @@ python -m tutorial_code.benchmarks.benchmark_attention --device cpu --seq-len 12
 5. 最后才进入模型级或现代 sparse 方法复现。
 
 不要将模型权重、HF cache、数据集、checkpoint 或 profiler dump 提交 Git。提交的是代码、配置、短摘要表和结论。
+
+教程作者在 107 上从环境安装到 FLA/profiler 的成功与失败证据见
+[`study/runs/2026-07-23-107-teacher-run.md`](study/runs/2026-07-23-107-teacher-run.md)；学生
+实验另建 run note，不覆盖这份先行记录。

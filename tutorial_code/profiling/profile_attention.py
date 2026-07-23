@@ -86,7 +86,7 @@ def main() -> None:
 
         if args.trace is None:
             for _ in range(args.steps):
-                output = marked_call("attention_step", fn)
+                output = marked_call("sla_attention_step", fn)
             torch.cuda.synchronize(device)
             print(f"external profiler target completed; output_shape={tuple(output.shape)}")
             return
@@ -101,8 +101,7 @@ def main() -> None:
         ) as prof:
             for _ in range(args.steps):
                 with record_function("attention_step"):
-                    output = marked_call("attention_step", fn)
-                prof.step()
+                    output = marked_call("sla_attention_step", fn)
         torch.cuda.synchronize(device)
         prof.export_chrome_trace(str(args.trace))
         print(prof.key_averages(group_by_input_shape=True).table(

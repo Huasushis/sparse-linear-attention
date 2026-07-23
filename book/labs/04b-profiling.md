@@ -57,7 +57,7 @@ profiler 时间能否替代 benchmark: 不能，因为 __________________
 
 ## 2. 用 NVTX 切出研究区间
 
-打开 `tutorial_code/profiling/profile_attention.py`，找到 `attention_step` 的 NVTX push/pop。
+打开 `tutorial_code/profiling/profile_attention.py`，找到 `sla_attention_step` 的 NVTX push/pop。
 回答：warm-up 是否在这个 range 内？为什么外部 profiler 应只采 range 内的 kernel？
 
 动态 sparse 实验以后应至少使用三个 range：
@@ -106,7 +106,8 @@ sbatch --export=ALL,RUN_TORCH_PROFILER=0,RUN_NCU=1 \
   cluster/profile-attention.sbatch
 ```
 
-模板用 `--set basic`、NVTX filter 与 `--launch-count 1`，避免 profile 整个进程。记录：
+模板先读取 `ncu --list-sets/--list-chips`，再用当前旧版可用的 `default` set、NVTX filter
+与 `--launch-count 1`，避免 profile 整个进程。记录：
 
 ```text
 被抓到的 kernel: ______________________
@@ -121,6 +122,13 @@ achieved occupancy: ____________________
 
 若出现 performance-counter 权限错误，保存错误摘要并停止。这个结果说明当前队列不能做该层
 profiling，不说明代码有 bug，也不授权普通用户修改系统设置。
+
+!!! note "教师实跑：工具存在不等于兼容"
+    2026-07-23 的 job `26199` 在 RTX 5090 节点发现 `ncu`，但版本是 2022.4.1；
+    `ncu --list-chips` 只列到 Ada/Hopper，没有 Blackwell `gb202`。job `26200` 的首次尝试
+    因旧 section/注入不兼容失败。修订后的脚本会先检查 chip list，在该节点明确输出
+    `SKIPPED`。如果之后分到 A100，仍需重新运行预检并检查 counter 权限。该节点也没有
+    `nsys`；这不是要求你自行安装系统工具，而是本次环境限制。
 
 ## 5. 做一次可证伪比较
 
