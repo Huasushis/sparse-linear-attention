@@ -14,17 +14,17 @@
 
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:?submit this script from the repository root}"
-SLA_VENV="${SLA_VENV:-$HOME/sparse_linear/.venvs/sla-tutorial-py312}"
+SLA_ENV="${SLA_ENV:-${SLA_VENV:-$HOME/sparse_linear/.envs/sla-tutorial-py312}}"
 FLA_REPO="${FLA_REPO:-$HOME/sparse_linear/flash-linear-attention}"
-if [[ ! -x "$SLA_VENV/bin/python" ]]; then
-    echo "Missing environment: $SLA_VENV; run cluster/setup-env.sbatch first" >&2
+if [[ ! -x "$SLA_ENV/bin/python" ]]; then
+    echo "Missing environment: $SLA_ENV; run cluster/setup-env.sbatch first" >&2
     exit 2
 fi
 if [[ ! -d "$FLA_REPO/.git" ]]; then
     echo "Missing FLA checkout: $FLA_REPO" >&2
     exit 2
 fi
-source "$SLA_VENV/bin/activate"
+export PATH="$SLA_ENV/bin:$PATH"
 export PYTHONPATH="$SLURM_SUBMIT_DIR:$FLA_REPO${PYTHONPATH:+:$PYTHONPATH}"
 
 echo "tutorial_commit=$(git rev-parse HEAD)"

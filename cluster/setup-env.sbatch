@@ -17,18 +17,23 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:?submit this script from the repository root}"
 : "${TORCH_INDEX_URL:?set TORCH_INDEX_URL only after reading the discovery job}"
 
-SLA_VENV="${SLA_VENV:-$HOME/sparse_linear/.venvs/sla-tutorial-py312}"
+SLA_ENV="${SLA_ENV:-${SLA_VENV:-$HOME/sparse_linear/.envs/sla-tutorial-py312}}"
 FLA_REPO="${FLA_REPO:-$HOME/sparse_linear/flash-linear-attention}"
+CONDA_EXE="${CONDA_EXE:-$HOME/miniconda3/bin/conda}"
 if [[ ! -d "$FLA_REPO/.git" ]]; then
     echo "FLA_REPO is not a Git checkout: $FLA_REPO" >&2
     exit 2
 fi
-
-mkdir -p "$(dirname "$SLA_VENV")" artifacts
-if [[ ! -x "$SLA_VENV/bin/python" ]]; then
-    python3.12 -m venv "$SLA_VENV"
+if [[ ! -x "$CONDA_EXE" ]]; then
+    echo "Conda executable not found: $CONDA_EXE" >&2
+    exit 2
 fi
-source "$SLA_VENV/bin/activate"
+
+mkdir -p "$(dirname "$SLA_ENV")" artifacts
+if [[ ! -x "$SLA_ENV/bin/python" ]]; then
+    "$CONDA_EXE" create --yes --prefix "$SLA_ENV" python=3.12 pip
+fi
+export PATH="$SLA_ENV/bin:$PATH"
 
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install --index-url "$TORCH_INDEX_URL" "torch>=2.7"
@@ -37,5 +42,5 @@ python -m pip install --no-deps --editable "$FLA_REPO"
 
 python -m tutorial_code.scripts.environment_report
 python -m pip freeze > "artifacts/environment-lock-${SLURM_JOB_ID}.txt"
-echo "environment=$SLA_VENV"
+echo "environment=$SLA_ENV"
 echo "fla_commit=$(git -C "$FLA_REPO" rev-parse HEAD)"

@@ -9,7 +9,7 @@
 | 脚本 | 作用 | 是否安装依赖 |
 | --- | --- | --- |
 | `discover-gpu.sbatch` | GPU/driver/Python/commit | 否 |
-| `setup-env.sbatch` | 建 Python 3.12 venv，安装匹配的 torch/Triton/FLA | 是 |
+| `setup-env.sbatch` | 用 Conda 建独立 Python 3.12 prefix，安装匹配的 torch/Triton/FLA | 是 |
 | `slurm-smoke.sbatch` | 教学测试、Triton、dense prefill/decode | 否 |
 | `fla-smoke.sbatch` | FLA GDN/KDA 小 shape 正确性 probe | 否 |
 

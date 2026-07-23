@@ -17,12 +17,12 @@
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:?submit this script from the repository root}"
 mkdir -p artifacts
-SLA_VENV="${SLA_VENV:-$HOME/sparse_linear/.venvs/sla-tutorial-py312}"
-if [[ ! -x "$SLA_VENV/bin/python" ]]; then
-    echo "Missing environment: $SLA_VENV; run cluster/setup-env.sbatch first" >&2
+SLA_ENV="${SLA_ENV:-${SLA_VENV:-$HOME/sparse_linear/.envs/sla-tutorial-py312}}"
+if [[ ! -x "$SLA_ENV/bin/python" ]]; then
+    echo "Missing environment: $SLA_ENV; run cluster/setup-env.sbatch first" >&2
     exit 2
 fi
-source "$SLA_VENV/bin/activate"
+export PATH="$SLA_ENV/bin:$PATH"
 
 echo "=== Git commit ==="
 git rev-parse HEAD || true
