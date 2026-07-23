@@ -201,10 +201,12 @@ BLOCK_SIZE = 128, 256, 512
 这些长度覆盖空闲 lane、warp/tile 边界、整除与非整除。若只测 `N=4096`，即使完全删除
 mask 也可能“正确”。
 
-### 一个有意制造的失败
+### 一个可控的失败实验
 
-临时删掉 `tl.store(..., mask=mask)` 的 mask，用 `N=257` 在受控测试中观察错误或非法访问，
-然后立即恢复。这个练习用于理解边界，不要在共享/重要环境中依赖越界行为的具体结果。
+不要通过删除 `tl.store` 的 mask 来学习边界：越界写的结果不确定，也可能让后续报错远离
+真正来源。改为把 `mask = offsets < n_elements` 故意写成 `offsets <= n_elements`，然后让
+grader 在 `N=257` 的带 guard 区域输出上检查第 258 个位置没有被改写。这样仍能观察
+off-by-one，却不会把任意地址交给 kernel 写。实验后立即恢复正确条件。
 
 ### 异步错误定位
 
@@ -438,8 +440,9 @@ softmax。与 `torch.softmax` 比较，加入“第二块有极大值”的测�
 
 ### 练习 9.6：画 attention grid
 
-对 `B=2,H=4,T=1024,D=64,BLOCK_M=64`，计算二维 grid 的两个轴大小。再讨论 causal 时每个
-program 循环多少 KV tile；不要写完整 kernel，只画职责与状态。
+对 `B=2,H=4,T=1024,D=64,BLOCK_M=64,BLOCK_N=64`，计算二维 grid 的两个轴大小。再讨论
+causal 时第 0、7、15 个 query program 分别循环多少个 KV tile；不要写完整 kernel，只画
+职责与状态。
 
 ## 通过条件
 

@@ -48,7 +48,7 @@ echo "repo_root=$REPO_ROOT"
 # Python fail in os.getcwd() before pip can even start.
 cd "$JOB_TMP"
 
-python -m pip install --upgrade pip setuptools wheel
+python -m pip install --upgrade pip "setuptools<82" wheel
 python -m pip install --index-url "$TORCH_INDEX_URL" "torch>=2.7"
 python -m pip install pytest "triton>=3.3" einops "transformers>=4.45.0"
 python -m pip install --no-deps --editable "$FLA_REPO"

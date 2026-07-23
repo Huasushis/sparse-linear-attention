@@ -6,9 +6,10 @@ import argparse
 import json
 
 import torch
+import torch.nn.functional as F
 
 from fla.ops.gated_delta_rule import fused_recurrent_gated_delta_rule, naive_recurrent_gated_delta_rule
-from fla.ops.kda import fused_recurrent_kda
+from fla.ops.kda import fused_recurrent_kda, naive_recurrent_kda
 
 
 def max_error(actual: torch.Tensor, expected: torch.Tensor) -> float:
@@ -30,8 +31,11 @@ def main() -> None:
     torch.manual_seed(args.seed)
     device = torch.device("cuda")
     shape = (args.batch, args.seq_len, args.heads, args.key_dim)
-    q = torch.randn(shape, device=device, dtype=torch.float32)
-    k = torch.randn_like(q)
+    # FLA's operator tests normalize q/k before comparing recurrent kernels.
+    # Without this contract, an unstable random recurrence can make a relative
+    # tolerance look acceptable while its absolute error is several units.
+    q = F.normalize(torch.randn(shape, device=device, dtype=torch.float32), p=2, dim=-1)
+    k = F.normalize(torch.randn_like(q), p=2, dim=-1)
     v = torch.randn(
         args.batch,
         args.seq_len,
@@ -41,11 +45,13 @@ def main() -> None:
         dtype=torch.float32,
     )
     beta = torch.sigmoid(torch.randn(args.batch, args.seq_len, args.heads, device=device))
-    scalar_log_decay = -torch.rand(args.batch, args.seq_len, args.heads, device=device)
+    scalar_log_decay = F.logsigmoid(
+        torch.randn(args.batch, args.seq_len, args.heads, device=device, dtype=torch.float32),
+    )
     channel_log_decay = scalar_log_decay.unsqueeze(-1).expand_as(q).contiguous()
 
     with torch.inference_mode():
-        reference_output, reference_state = naive_recurrent_gated_delta_rule(
+        gdn_reference_output, gdn_reference_state = naive_recurrent_gated_delta_rule(
             q,
             k,
             v,
@@ -61,6 +67,14 @@ def main() -> None:
             beta=beta,
             output_final_state=True,
         )
+        kda_reference_output, kda_reference_state = naive_recurrent_kda(
+            q,
+            k,
+            v,
+            g=channel_log_decay,
+            beta=beta,
+            output_final_state=True,
+        )
         kda_output, kda_state = fused_recurrent_kda(
             q,
             k,
@@ -72,10 +86,12 @@ def main() -> None:
     torch.cuda.synchronize()
 
     errors = {
-        "gdn_output_vs_naive": max_error(gdn_output, reference_output),
-        "gdn_state_vs_naive": max_error(gdn_state, reference_state),
-        "scalarized_kda_output_vs_naive_gdn": max_error(kda_output, reference_output),
-        "scalarized_kda_state_vs_naive_gdn": max_error(kda_state, reference_state),
+        "naive_kda_output_vs_naive_gdn": max_error(kda_reference_output, gdn_reference_output),
+        "naive_kda_state_vs_naive_gdn": max_error(kda_reference_state, gdn_reference_state),
+        "fused_gdn_output_vs_naive_gdn": max_error(gdn_output, gdn_reference_output),
+        "fused_gdn_state_vs_naive_gdn": max_error(gdn_state, gdn_reference_state),
+        "fused_kda_output_vs_naive_kda": max_error(kda_output, kda_reference_output),
+        "fused_kda_state_vs_naive_kda": max_error(kda_state, kda_reference_state),
         "gdn_output_vs_scalarized_kda": max_error(gdn_output, kda_output),
         "gdn_state_vs_scalarized_kda": max_error(gdn_state, kda_state),
     }
@@ -84,14 +100,25 @@ def main() -> None:
         "torch_cuda": torch.version.cuda,
         "gpu": torch.cuda.get_device_name(device),
         "shape": vars(args),
+        "contract": {
+            "qk_l2_normalized": True,
+            "gate_space": "log decay",
+            "kda_gate": "GDN scalar gate broadcast over key channels",
+        },
         "max_absolute_error": errors,
     }
     print(json.dumps(report, indent=2))
 
-    torch.testing.assert_close(gdn_output, reference_output, atol=3e-3, rtol=3e-3)
-    torch.testing.assert_close(gdn_state, reference_state, atol=3e-3, rtol=3e-3)
-    torch.testing.assert_close(kda_output, reference_output, atol=3e-3, rtol=3e-3)
-    torch.testing.assert_close(kda_state, reference_state, atol=3e-3, rtol=3e-3)
+    # First verify the algebraic degeneration in the two transparent loops,
+    # then allow the small accumulation-order error of each Triton kernel.
+    torch.testing.assert_close(kda_reference_output, gdn_reference_output, atol=1e-6, rtol=1e-6)
+    torch.testing.assert_close(kda_reference_state, gdn_reference_state, atol=1e-6, rtol=1e-6)
+    torch.testing.assert_close(gdn_output, gdn_reference_output, atol=3e-3, rtol=3e-3)
+    torch.testing.assert_close(gdn_state, gdn_reference_state, atol=3e-3, rtol=3e-3)
+    torch.testing.assert_close(kda_output, kda_reference_output, atol=3e-3, rtol=3e-3)
+    torch.testing.assert_close(kda_state, kda_reference_state, atol=3e-3, rtol=3e-3)
+    torch.testing.assert_close(kda_output, gdn_output, atol=3e-3, rtol=3e-3)
+    torch.testing.assert_close(kda_state, gdn_state, atol=3e-3, rtol=3e-3)
 
 
 if __name__ == "__main__":

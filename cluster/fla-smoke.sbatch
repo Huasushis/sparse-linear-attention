@@ -14,6 +14,7 @@
 
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:?submit this script from the repository root}"
+cd .
 SLA_ENV="${SLA_ENV:-${SLA_VENV:-$HOME/sparse_linear/.envs/sla-tutorial-py312}}"
 FLA_REPO="${FLA_REPO:-$HOME/sparse_linear/flash-linear-attention}"
 if [[ ! -x "$SLA_ENV/bin/python" ]]; then

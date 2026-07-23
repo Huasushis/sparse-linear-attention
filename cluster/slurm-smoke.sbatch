@@ -16,6 +16,7 @@
 
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:?submit this script from the repository root}"
+cd .
 mkdir -p artifacts
 SLA_ENV="${SLA_ENV:-${SLA_VENV:-$HOME/sparse_linear/.envs/sla-tutorial-py312}}"
 if [[ ! -x "$SLA_ENV/bin/python" ]]; then
