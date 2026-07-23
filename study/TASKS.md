@@ -27,8 +27,10 @@
 - [ ] 实现一个仅用于正确性验证的 dense attention reference（L1）。
 - [ ] 比较 reference、PyTorch SDPA 和可用的 FlashAttention 后端（L2）。
 - [ ] 记录不同 `B, T, H, D, dtype` 下的延迟、显存和数值误差。
+- [ ] 完成 Lab 4B：先用 PyTorch Profiler/`nsys` 解释一个 shape；若 `ncu` 权限可用，再只抓一个关键 kernel。
 
-**通过条件：** 一张 benchmark 表能回答“哪个形状下谁快、为什么”，并注明 GPU、PyTorch/CUDA、精度和同步方法。
+**通过条件：** 一张 benchmark 表能回答“哪个形状下谁快”，并注明 GPU、PyTorch/CUDA、
+精度和同步方法；另有一条 profiler 证据支持“为什么”，且没有把插桩时间当主结果。
 
 ## P3：Linear attention 的算法主线
 

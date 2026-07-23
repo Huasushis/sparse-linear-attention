@@ -100,6 +100,7 @@ nav:
       - Lab 2. Linear attention 三种形式: labs/02-linear-attention.md
       - Lab 3. GDN 与 KDA 等价实验: labs/03-gdn-kda.md
       - Lab 4. GPU benchmark: labs/04-gpu-benchmark.md
+      - Lab 4B. Profiling 工具链: labs/04b-profiling.md
       - Lab 5. Triton 起步: labs/05-triton.md
       - Lab 6. 107 上的 FLA smoke test: labs/06-fla-on-107.md
       - Lab 7. Sparse mask 与 operator: labs/07-sparse-mask.md

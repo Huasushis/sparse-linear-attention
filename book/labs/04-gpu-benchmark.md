@@ -30,3 +30,6 @@ JSON 中还保存每次原始 sample 与环境元数据。正式表格由这些 
 ## 通过条件
 
 你能解释一条“linear reference 比 SDPA 慢”的结果为何完全可能成立，也能指出它不等于线性模型没有价值。
+
+时间表稳定后继续 [Lab 4B：从计时到 profiler 证据](04b-profiling.md)。先有 benchmark，
+再用 profiler 解释，不把两者的时间混用。

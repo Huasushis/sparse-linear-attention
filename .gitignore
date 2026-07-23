@@ -31,3 +31,6 @@ mlruns/
 *.nsys-rep
 *.qdrep
 *.sqlite
+*.ncu-rep
+*.nsight-cuprof-report
+*.pt.trace.json

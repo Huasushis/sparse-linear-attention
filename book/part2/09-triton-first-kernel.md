@@ -204,9 +204,10 @@ mask 也可能“正确”。
 ### 一个可控的失败实验
 
 不要通过删除 `tl.store` 的 mask 来学习边界：越界写的结果不确定，也可能让后续报错远离
-真正来源。改为把 `mask = offsets < n_elements` 故意写成 `offsets <= n_elements`，然后让
-grader 在 `N=257` 的带 guard 区域输出上检查第 258 个位置没有被改写。这样仍能观察
-off-by-one，却不会把任意地址交给 kernel 写。实验后立即恢复正确条件。
+真正来源。写一个仅供本测试使用的 wrapper：为 `x/y/output` 都分配 `N+1` 个元素，把最后
+一个设为 sentinel，但向 kernel 传逻辑长度 `N`。再把 `mask = offsets < n_elements` 故意
+写成 `offsets <= n_elements`，让 grader 检查 guard 元素被错误改写。这样仍能观察
+off-by-one，实际访问却留在已分配 buffer 内。实验后立即恢复正确条件。
 
 ### 异步错误定位
 

@@ -255,16 +255,218 @@ activation 和 logits 仍占空间。
 
 ## 6.8 Profiler 用来解释，不用来装饰
 
-benchmark 告诉你“快多少”，profiler 帮你判断“为什么”。建议顺序：
+benchmark 告诉你“快多少”，profiler 帮你判断“为什么”。Profiler 会插桩、同步、采样，
+有时还会把同一 kernel replay 多次。因此 **profiler 中显示的总耗时不是主 benchmark**。
+先用上一节的方法得到可信时间，再对一个有代表性的 shape 做诊断。
 
-1. 先得到稳定、可复现的时间；
-2. 写下瓶颈假设；
-3. 再用 profiler 检查 kernel 数、时间占比、内存流量、tensor core 使用、occupancy 等；
-4. 若证据否定假设，修改解释，而不是挑一张漂亮截图。
+### 6.8.1 先按问题选择工具
 
-开始阶段不要一次收集所有指标。先回答一个具体问题，例如“为什么 `T=128` 时 Triton
-版本更慢：launch 太多，还是访存模式差？” profiler dump 往往很大，应留在集群工作
-目录，只把命令、关键数字和小截图/表格提交 Git。
+| 你现在的问题 | 起步工具 | 主要产物 | 它不能单独回答什么 |
+| --- | --- | --- | --- |
+| 这个固定算子稳态多长时间？ | CUDA Events、`triton.testing.do_bench` | latency samples | 时间为什么这样 |
+| Python/CPU 小函数是否有调度开销？ | `torch.utils.benchmark.Timer`、必要时 `cProfile` | host-side 统计 | 单个 CUDA kernel 的硬件瓶颈 |
+| PyTorch 调了哪些 op/kernel、各几次？ | `torch.profiler` | 聚合表、Chrome trace | 完整硬件 counter |
+| CPU launch、GPU kernel、memcpy 是否重叠？ | Nsight Systems (`nsys`) | 系统时间线、`.nsys-rep` | 单个 kernel 哪条指令受限 |
+| 一个关键 kernel 为何慢？ | Nsight Compute (`ncu`) | counter/section、`.ncu-rep` | 端到端请求调度 |
+| 显存峰值与 allocator 在做什么？ | PyTorch memory stats/snapshot | peak、分配历史 | DRAM 的真实硬件流量 |
+| 是否越界、race、未初始化读取？ | `compute-sanitizer` | correctness diagnostics | 正常运行速度 |
+| GPU 型号、功耗、利用率粗采样？ | `nvidia-smi` / `nvidia-smi dmon` | 设备状态 | 微秒级 kernel 利用率 |
+
+`nvprof` 是旧 CUDA 时代的工具。新实验优先把系统时间线交给 `nsys`，把 kernel counter
+交给 `ncu`；集群上找不到 `nvprof` 不需要补装它。
+
+### 6.8.2 三种“时间”不要混起来
+
+1. **CPU wall time**：CPU 从调用前走到调用后的时间；不同步时常常只包含 launch。
+2. **CUDA Event time**：同一 stream 上两个 event 之间的设备时间；适合 microbenchmark。
+3. **Profiler time**：插桩后的观测时间；适合看结构、比例和瓶颈证据。
+
+如果 CUDA Event 说 SDPA 是 `0.04 ms`，profiler trace 中一次调用显示 `0.08 ms`，不能挑
+对自己更有利的一个。主表用前者的测量协议；后者注明 profiler overhead，只用于解释。
+
+`torch.utils.benchmark.Timer` 会处理重复、统计和部分环境噪声，适合 CPU/Python 或需要
+与 PyTorch 常规算子统一比较的实验；对于本课程的 CUDA attention 路径，仍以明确的 CUDA
+Event/synchronize 契约为主。Triton 的 `do_bench` 很方便，但不同版本参数会变化，先查看
+当前环境的 `help(triton.testing.do_bench)`。
+
+### 6.8.3 第一层：PyTorch Profiler
+
+PyTorch Profiler 最适合回答“框架层究竟做了什么”。核心对象是：
+
+```python
+from torch.profiler import ProfilerActivity, profile, record_function
+
+with profile(
+    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    record_shapes=True,
+    profile_memory=True,
+) as prof:
+    with record_function("attention_step"):
+        output = fn()
+    prof.step()
+
+print(prof.key_averages().table(
+    sort_by="self_cuda_time_total",
+    row_limit=15,
+))
+prof.export_chrome_trace("artifacts/attention-trace.json")
+```
+
+课程代码已经把它实现为
+[`tutorial_code/profiling/profile_attention.py`](https://github.com/Huasushis/sparse-linear-attention/blob/codex/tutorial-book/tutorial_code/profiling/profile_attention.py)。
+第一次看聚合表只读六列/概念：
+
+- `Name`：PyTorch op、用户 range 或 CUDA kernel；
+- `Self CPU`：该项自身在 host 上花的时间，不含子调用；
+- `CPU total`：含子调用的 host 时间；
+- `Self CUDA` / `CUDA total`：对应 device 工作；
+- `# of Calls`：一个数学算子是否被拆成大量小 launch；
+- input shape / memory：是否意外走了另一种 shape 或产生大临时量。
+
+`Self` 与 `total` 不能相加。父 range 的 total 会包含子 op；把每行 total 求和会重复计算。
+`record_shapes=True`、`profile_memory=True`、`with_stack=True` 都会增加开销并可能延长 tensor
+寿命，尤其 `with_stack` 只在确实要找 Python 调用点时开启。
+
+Chrome trace 的第一遍阅读顺序：
+
+1. 找到自己命名的 `attention_step`；
+2. 在 CPU 轨道看 launch 是否密集、launch 之间是否有大空洞；
+3. 在 CUDA stream 轨道数 kernel 个数、看是否重叠；
+4. 查 `cudaMemcpy*`、allocator 或同步是否落在计时区间；
+5. 最后才读冗长的 kernel 名字。
+
+训练循环很长时不要 trace 每一步。官方 profiler 提供
+`schedule(wait=..., warmup=..., active=..., repeat=...)` 与 `on_trace_ready`，每一步调用
+`prof.step()`；这让 trace 只覆盖少量代表性 iteration。trace 文件可能很大，不进 Git。
+
+### 6.8.4 NVTX：给外部 profiler 画边界
+
+NVTX 本身不测性能，它给时间线加上人能读懂的 range：
+
+```python
+torch.cuda.nvtx.range_push("attention_step")
+try:
+    output = fn()
+finally:
+    torch.cuda.nvtx.range_pop()
+```
+
+`nsys` 能在时间线上显示这个区间；`ncu` 能用它只采区间内的 kernel。range 名应稳定、短、
+表达阶段，例如 `selector`、`attention_kernel`、`scatter_merge`，不要把随机 UUID 塞进名称。
+动态 sparse attention 尤其应分别标记 selector 和核心 kernel，否则一张时间线仍无法回答
+选择开销是否吃掉收益。
+
+### 6.8.5 第二层：Nsight Systems 看全局时间线
+
+`nsys` 适合回答：CPU 是否及时提交、GPU 是否有空洞、是否发生 H2D/D2H copy、多条 stream
+是否重叠、一个 PyTorch op 最终发出几个 kernel。一个起步命令是：
+
+```bash
+nsys profile \
+  --trace=cuda,nvtx,osrt \
+  --sample=none \
+  --cpuctxsw=none \
+  -o artifacts/nsys-attention-$SLURM_JOB_ID \
+  python -m tutorial_code.profiling.profile_attention \
+    --operator torch_sdpa --mode prefill --seq-len 512 --steps 5
+```
+
+这里先关闭 CPU instruction sampling/context-switch collection，只收本问题所需的 CUDA、
+NVTX、OS runtime，降低权限要求和报告大小。需要 host 调度细节时再有目的地打开相应采集。
+CLI 会生成 `.nsys-rep`；没有 GUI 时可先运行：
+
+```bash
+nsys stats --help-reports
+nsys stats --report cuda_gpu_kern_sum artifacts/example.nsys-rep
+```
+
+`nsys` 看到 GPU 空洞，只能说明“没有 kernel 在跑”；原因可能是 Python、数据依赖、同步、
+CPU dataloader 或通信。必须沿空洞前后的 CPU/CUDA API 继续定位，不能直接归咎于 kernel。
+
+### 6.8.6 第三层：Nsight Compute 钻进一个 kernel
+
+当 `nsys` 已经指出一个关键 kernel，再使用 `ncu`。不要一上来对整个模型收 `--set full`：
+Nsight Compute 为收集 counter 可能 replay kernel 多次，运行会慢很多，数据量也会爆炸。
+
+课程 target 用 NVTX 过滤并只抓一次 launch：
+
+```bash
+ncu \
+  --set basic \
+  --nvtx --nvtx-include "attention_step/" \
+  --launch-count 1 \
+  --page details \
+  -o artifacts/ncu-attention-$SLURM_JOB_ID \
+  python -m tutorial_code.profiling.profile_attention \
+    --operator torch_sdpa --mode prefill --seq-len 512 --steps 1
+```
+
+`attention_step/` 末尾的 `/` 表示 NVTX push/pop range。先用 `--set basic`；只有在形成问题后
+才增加 section，例如 memory workload、occupancy 或 warp stall。常看的不是“越高越好”
+排行榜，而是一组互相约束的证据：
+
+| 观察 | 可以支持的假设 | 仍需排除 |
+| --- | --- | --- |
+| DRAM throughput 接近峰值、compute 较低 | 可能带宽受限 | cache 命中、请求合并与有用字节定义 |
+| SM/compute throughput 高 | 可能计算受限 | 做的是否都是必要 FLOPs |
+| achieved occupancy 低 | 驻留 warp 少 | 低 occupancy 是否真的造成 stall |
+| register/shared-memory 用量高 | tile 资源限制并发 | 更小 tile 是否损失复用 |
+| warp stall 某类占比高 | 给下一步调查方向 | stall 指标的采样/归因语义 |
+| Tensor Core pipe 活跃 | 确实走矩阵路径 | dtype、数值与非 GEMM 部分成本 |
+
+occupancy 不是目标函数。一个低 occupancy、复用很好的 kernel 可能比高 occupancy 版本快；
+最终仍回到未插桩的 latency。若集群禁止读取 GPU performance counters，`ncu` 会报告权限
+错误；普通用户不应尝试绕过，应保留报错并询问管理员是否开放 profiling queue/权限。
+
+### 6.8.7 显存、设备状态与正确性工具
+
+PyTorch allocator 起步接口：
+
+```python
+torch.cuda.reset_peak_memory_stats()
+output = fn()
+torch.cuda.synchronize()
+print(torch.cuda.max_memory_allocated())
+print(torch.cuda.memory_summary())
+```
+
+峰值前应先创建并保留输入，否则你测到的是“输入 + 算子”而不是增量。更深的 allocation
+history/snapshot 会很大，只在定位碎片或异常分配时启用。
+
+`nvidia-smi` 用于记录 GPU、driver、显存和粗粒度利用率；毫秒级甚至微秒级 kernel 可能
+完全落在采样间隔之间，所以“利用率 0%”不能反证 kernel 没运行。`nvidia-smi dmon` 适合
+看较长作业的功耗/利用率趋势，不替代 profiler。
+
+`compute-sanitizer` 用于内存越界、race、未初始化访问等正确性问题。它会显著减慢程序；
+先把输入缩到最小，运行单个测试/单个 kernel，再回到正常模式做 benchmark。不要在 sanitizer
+下报告性能。
+
+### 6.8.8 一条实际诊断链
+
+假设你看到 `T=128` 时自写 Triton attention 比 SDPA 慢：
+
+```text
+CUDA Events：确认差距稳定，不含 JIT/分配
+    ↓
+PyTorch Profiler：自写路径是否发出更多 kernel？
+    ↓
+nsys：慢在 launch 空洞、memcpy，还是一个长 kernel？
+    ↓
+ncu（只抓关键 kernel）：带宽、计算、register/shared-memory、stall 假设
+    ↓
+只改一个变量（tile / fusion / layout）
+    ↓
+correctness test + 未插桩 benchmark 复验
+```
+
+若证据否定原假设，就修改解释。Profiler dump 留在远端 `artifacts/`；Git 只提交命令、版本、
+关键数字和“证据 -> 判断 -> 下一步”。配套实操见
+[Lab 4B：从计时到 profiler 证据](../labs/04b-profiling.md)。
+
+官方入口：PyTorch 的
+[Profiler recipe](https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html)、NVIDIA 的
+[Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html) 与
+[Nsight Compute CLI Guide](https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html)。
 
 ## 6.9 一张可复跑的实验卡
 

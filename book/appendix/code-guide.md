@@ -8,6 +8,7 @@ tutorial_code/
 ├── kernels/         # 课程自带的最小 Triton reference
 ├── tests/           # reference 回归测试；不代表 TODO 已完成
 ├── benchmarks/      # 统一 warm-up / synchronize / percentile 的小基准
+├── profiling/       # PyTorch Profiler 与 nsys/ncu 共用的小目标程序
 └── scripts/         # 环境报告、mask 与 GDN/KDA/FLA 探针
 ```
 
@@ -28,6 +29,9 @@ python -m tutorial_code.scripts.gdn_kda_probe
 
 # CPU 或已分配 GPU 上的小 benchmark
 python -m tutorial_code.benchmarks.benchmark_attention --operator dense --mode prefill --device auto --seq-len 512
+
+# 仅在已分配 CUDA 的 Slurm job 内；生成小型 PyTorch trace
+python -m tutorial_code.profiling.profile_attention --trace artifacts/attention-trace.json
 ```
 
 `reference` 的慢循环是刻意保留的：它们是解释公式和验证 kernel 的 oracle，不是高性能实现。后续用 Triton/FLA 时，要始终先问“我相对的是哪个 reference、什么容差、哪个阶段？”

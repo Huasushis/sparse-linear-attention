@@ -49,6 +49,8 @@ python -m tutorial_code.benchmarks.benchmark_attention --device cpu --seq-len 12
 ```
 
 `tutorial_code/reference/` 是正确性 oracle，故意不追求快；`tutorial_code/exercises/` 留有可填写的 TODO；`tutorial_code/benchmarks/` 统一处理 warm-up、同步和分位数。
+`tutorial_code/profiling/` 则让同一固定 workload 接入 PyTorch Profiler、NVTX、`nsys` 与
+`ncu`；profiling 用于解释，不能替代未插桩的 benchmark。
 
 ## 107 上的顺序
 
