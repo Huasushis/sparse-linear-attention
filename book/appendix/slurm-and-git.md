@@ -4,7 +4,7 @@
 
 根据你的作业模板，默认最多申请 4 CPU、1 GPU、最长 4 小时；账户/分区/QoS 为集群本地约束。GPU 节点可能是 A100 80G 或 5090，所以 **在 job 内** 检测 driver、CUDA、PyTorch，而不是在登录节点猜测。
 
-集群链分成四个短作业，失败时能明确卡在哪一层：
+集群链分成五个短作业，失败时能明确卡在哪一层：
 
 | 脚本 | 作用 | 是否安装依赖 |
 | --- | --- | --- |
@@ -12,6 +12,7 @@
 | `setup-env.sbatch` | 用 Conda 建独立 Python 3.12 prefix，安装匹配的 torch/Triton/FLA | 是 |
 | `slurm-smoke.sbatch` | 教学测试、Triton、dense prefill/decode | 否 |
 | `fla-smoke.sbatch` | FLA GDN/KDA 小 shape 正确性 probe | 否 |
+| `profile-attention.sbatch` | 工具探测、PyTorch trace；按需尝试 nsys/ncu | 否 |
 
 提交前在远程项目根目录执行：
 

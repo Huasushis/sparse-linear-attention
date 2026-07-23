@@ -58,7 +58,8 @@ python -m tutorial_code.benchmarks.benchmark_attention --device cpu --seq-len 12
 2. 根据该节点选择 PyTorch wheel，提交 `cluster/setup-env.sbatch` 创建独立 Python 3.12 环境；
 3. 提交 `cluster/slurm-smoke.sbatch`，运行 reference、Triton 和 prefill/decode benchmark；
 4. 提交 `cluster/fla-smoke.sbatch`，运行 FLA GDN/KDA operator probe；
-5. 最后才进入模型级或现代 sparse 方法复现。
+5. 稳定计时后提交 `cluster/profile-attention.sbatch`，先用 PyTorch trace 解释一个 shape；
+6. 最后才进入模型级或现代 sparse 方法复现。
 
 不要将模型权重、HF cache、数据集、checkpoint 或 profiler dump 提交 Git。提交的是代码、配置、短摘要表和结论。
 
