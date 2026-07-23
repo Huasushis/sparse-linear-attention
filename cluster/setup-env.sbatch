@@ -16,6 +16,7 @@
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:?submit this script from the repository root}"
 cd .
+REPO_ROOT="$(pwd -P)"
 : "${TORCH_INDEX_URL:?set TORCH_INDEX_URL only after reading the discovery job}"
 
 SLA_ENV="${SLA_ENV:-${SLA_VENV:-$HOME/sparse_linear/.envs/sla-tutorial-py312}}"
@@ -39,7 +40,13 @@ JOB_TMP="${SLURM_TMPDIR:-/tmp/sla-${USER}-${SLURM_JOB_ID}}"
 mkdir -p "$JOB_TMP/pip-cache"
 export TMPDIR="$JOB_TMP"
 export PIP_CACHE_DIR="$JOB_TMP/pip-cache"
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 echo "job_tmp=$JOB_TMP"
+echo "repo_root=$REPO_ROOT"
+
+# Keep pip's current directory off NFS.  A transiently stale NFS cwd makes
+# Python fail in os.getcwd() before pip can even start.
+cd "$JOB_TMP"
 
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install --index-url "$TORCH_INDEX_URL" "torch>=2.7"
@@ -47,6 +54,6 @@ python -m pip install pytest "triton>=3.3" einops "transformers>=4.45.0"
 python -m pip install --no-deps --editable "$FLA_REPO"
 
 python -m tutorial_code.scripts.environment_report
-python -m pip freeze > "artifacts/environment-lock-${SLURM_JOB_ID}.txt"
+python -m pip freeze > "$REPO_ROOT/artifacts/environment-lock-${SLURM_JOB_ID}.txt"
 echo "environment=$SLA_ENV"
 echo "fla_commit=$(git -C "$FLA_REPO" rev-parse HEAD)"
