@@ -46,11 +46,11 @@ nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 python -m tutorial_code.scripts.environment_report
 
 PROFILE_ARGS=(
-    --operator torch_sdpa
-    --mode prefill
-    --seq-len 512
-    --dtype bfloat16
-    --warmup 10
+    --operator "${PROFILE_OPERATOR:-torch_sdpa}"
+    --mode "${PROFILE_MODE:-prefill}"
+    --seq-len "${PROFILE_SEQ_LEN:-512}"
+    --dtype "${PROFILE_DTYPE:-bfloat16}"
+    --warmup "${PROFILE_WARMUP:-10}"
 )
 
 if [[ "${RUN_TORCH_PROFILER:-1}" == "1" ]]; then

@@ -136,6 +136,14 @@ profiling，不说明代码有 bug，也不授权普通用户修改系统设置�
 预测它相对 SDPA 会多出哪些 op/kernel，然后核对。注意两者数学结果相同，但 reference
 显式构造 scores/mask，正适合观察 fusion 与中间量的差别。
 
+```bash
+sbatch --export=ALL,PROFILE_OPERATOR=reference_dense \
+  cluster/profile-attention.sbatch
+```
+
+模板还接受 `PROFILE_MODE`、`PROFILE_SEQ_LEN`、`PROFILE_DTYPE` 与 `PROFILE_WARMUP`。一次只改
+一个轴，并把实际值写进 run note；不要同时改 shape 和 operator 后声称差异来自 fusion。
+
 ## 交付物
 
 在你的 run note 中提交小摘要，不提交 `.json/.nsys-rep/.ncu-rep`：
