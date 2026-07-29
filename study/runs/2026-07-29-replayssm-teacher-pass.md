@@ -29,4 +29,3 @@
 - 没有把博客在 H100/B300、BF16/NVFP4、CUDA Graph 下的 `1.48x`/`1.87--1.96x` 写成 107 结果；
 - 没有在登录节点运行 CUDA。后续若做 L2 Triton microbenchmark，应通过 Slurm 固定 GPU、
   buffer length、warm-up、CUDA Event 和 profiler 证据。
-
