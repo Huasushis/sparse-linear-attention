@@ -268,6 +268,115 @@ benchmark command:   __________
 编译 cache 或 profiler dump 提交 Git。集群工作流和 Slurm 模板由后续 Lab 专门处理，本章
 只要求你先知道“版本和证据也是实验的一部分”。
 
+## 13.12 ReplaySSM：同一递推，另一种 decode cache policy
+
+[ReplaySSM](https://tridao.me/blog/2026/replayssm/) 是 Tri Dao 与 Ze-Wei Liou 于 2026-06-15
+发布的工程技术博客，配套代码是一个 [vLLM research fork](https://github.com/Johnny-Liou/ReplaySSM)。
+它不是新的 sparse mask，也不是新的训练目标；它研究的是：**同一个 SSM/linear-attention
+递推，在 GPU decode 时究竟应该把什么写回 HBM。** 因此它适合作为本章的 B* 工程补充案例，
+而不是 74 篇学术论文中的第 75 篇。
+
+一个容易误引的细节：博客里的 `[PDF]` 链接指向的是
+[Gated DeltaNet-2](https://arxiv.org/abs/2605.22791) 技术报告，并不是 ReplaySSM 论文。
+ReplaySSM 本身在当前资料中应以博客、代码仓库和上游 RFC/PR 作为工程资料引用。
+
+### 13.12.1 先把问题写成访存图
+
+为避免和不同仓库的转置约定混淆，本节采用本书的 state 方向：
+`S:[B,H,D_k,D_v]`，`q,k:[B,H,D_k]`，`v:[B,H,D_v]`。简化的 Mamba-2 递推是
+
+$$
+S_t=a_tS_{t-1}+\Delta_t k_tv_t^\top,
+\qquad y_t=S_t^\top q_t.
+$$
+
+标准 decode 每个 token 大致走这条路径：
+
+```text
+load S_(t-1) from HBM -> update S_t -> read y_t -> store S_t to HBM
+```
+
+矩阵更新很小，反而是完整 state 的读写占主导，所以“理论上 state 是 `O(1)`”并不等于
+“GPU decode 免费”。这正好补上第 5、6 章的性能模型与第 11/12 章递推之间的一条实际连接。
+
+### 13.12.2 checkpoint + ring buffer
+
+ReplaySSM 保留一个较少写回的 checkpoint `S_0`，把最近输入放进小 ring buffer；buffer 未满时，
+不把新的完整 state 写回 HBM。对 Mamba-2，buffer 记录每步的 `(k,v,Δ)` 及衰减所需量。把
+递推展开后，最近窗口内的输出可以写成：
+
+$$
+y_t=\bar a_t S_0^\top q_t+
+\sum_{j\le t}w_{j,t}\,v_j(k_j^\top q_t).
+$$
+
+第二项使用结合律 `((k_jv_j^\top)^\top q_t)=v_j(k_j^\top q_t)`：它直接得到 output，
+不必先物化每个 `D_k\times D_v` state。buffer 达到容量时才 flush，把窗口折叠进 checkpoint
+并清空/推进 ring cursor。
+
+```text
+checkpoint S0 + recent input ring buffer
+          |                         |
+          | output-only route       | buffer full
+          v                         v
+   K^T Q -> weighted V       state-and-output flush -> new S0
+```
+
+buffer 长度不是越大越好：太短会频繁 flush，太长会增加每步 buffer 读取和重算。它是一个
+需要在目标 GPU、batch、dtype 上测出的系统参数，不是论文公式可以单独决定的常数。
+
+### 13.12.3 GDN 的关键陷阱与 speculative decode
+
+GDN 不能简单照搬“缓存原始 `v`”的说法。衰减之后的状态先读取当前 key，再形成修正量
+
+$$
+u_t=\beta_t\bigl(v_t-\bar S_t^\top k_t\bigr),
+\qquad S_t=\bar S_t+k_tu_t^\top.
+$$
+
+`u_t` 已经依赖旧 state；ReplaySSM 因而缓存 `(u,k,g)`（而不是只缓存原始 `v`），这样重放
+时不会重新引入逐 token 的 state 依赖。speculative decoding 中，拒绝 draft 只需移动 ring
+buffer 指针；GDN 的 draft 输出则用带 causal mask 的 chunkwise triangular solve/矩阵运算，
+而不是为每个 draft 保存一个完整 state snapshot。
+
+这不是把 GDN 变成 sparse attention。它改变的是 **cache policy、执行顺序和 kernel dataflow**，
+模型的递推语义保持不变（允许浮点舍入差异）。
+
+### 13.12.4 从代码到证据
+
+仓库 README 列出了值得按层阅读的 Triton 文件：
+
+| 目标 | 先读的文件 | 先回答的问题 |
+| --- | --- | --- |
+| Mamba-2 普通 decode | `selective_state_update_replayssm_output_only.py` | 怎样从 checkpoint/buffer 直接得到 output？ |
+| Mamba-2 flush | `selective_state_update_replayssm_state_and_output.py` | 何时物化 state，写回多少？ |
+| Mamba-2 speculative | `selective_state_update_replayssm_spec.py` | commit/rollback cursor 怎样保持因果性？ |
+| GDN | `fused_recurrent_replayssm.py`、`gdn_replayssm_spec_decode.py` | 为什么要缓存 `u`，哪里解除串行依赖？ |
+
+推荐阅读博客的 2.1、3、5.1、5.3、5.4 和 Appendix A.1/A.2，先跳过完整 vLLM 集成与大模型
+图表。代码仓库的 benchmark 需要 H100/B300、CUDA Graph 和 4B--550B 模型；博客中最高约
+`1.48x` 标准 decode 端到端、`1.87--1.96x` speculative decode 是作者在特定硬件/版本上的
+结果，不是 107 RTX 5090 的预期数字。上游 [RFC #47572](https://github.com/vllm-project/vllm/issues/47572)
+仍是 Open，[PR #47576](https://github.com/vllm-project/vllm/pull/47576) 仍是 Draft；因此本案例
+的重点是读懂因果链和做小算子验证，不是宣称已经生产化。
+
+### 13.12.5 你的最小复现阶梯
+
+不要从 vLLM 或大模型权重开始。按下面顺序留下证据：
+
+1. **L1 reference：** `B=H=1,T<=32,float64`，逐步 recurrent Mamba-2 与 output-only 重结合
+   的 output、每步 state 对齐；
+2. **L1 cache：** 实现 buffer length `4/8/16/32` 和 flush，测试 ring cursor 的 commit/rollback；
+3. **L2 kernel：** 只在 GPU 可用时写一个小 Triton operator，比较 recurrent 与 replay 的 CUDA
+   Event 中位数；
+4. **L3 serving（可选）：** 读 vLLM 接入点，再决定是否有合适模型/节点。不要把下载权重或复现
+   B300/NVFP4 表格设为入门通过条件。
+
+计时和解释沿用 [Lab 4B：从计时到 profiler 证据](../labs/04b-profiling.md)：CUDA Event
+负责稳态延迟，PyTorch Profiler/`nsys` 负责调用与时间线，`ncu`（若权限和架构支持）才适合
+查看真实 memory throughput。Profiler 的 kernel 时间不能直接替代主 benchmark，也不能仅凭
+PyTorch trace 声称“写了多少 HBM”；后者要靠 kernel 数据流、字节模型或硬件 counter 交叉验证。
+
 ## 常见误区
 
 **误区 1：从 kernel 第一行读到最后一行。**

@@ -12,6 +12,18 @@ tutorial_code/
 └── scripts/         # 环境报告、mask 与 GDN/KDA/FLA 探针
 ```
 
+ReplaySSM 的教学入口也保持这条分层：
+
+```text
+tutorial_code/reference/replayssm.py       # recurrent 与 output-only/flush oracle
+tutorial_code/exercises/05_replayssm_todo.py # 留给学习者的重结合 TODO
+tutorial_code/tests/test_replayssm.py      # 小 shape 的等价性回归测试
+tutorial_code/graders/test_exercise_replayssm.py # 完成 TODO 后的独立检查
+```
+
+这些文件只覆盖 `B=H=1` 的小算子，不是官方 vLLM fork 的替代品；先用它们确认公式和
+buffer 语义，再决定是否阅读上游 Triton kernel。
+
 ## 最常用的命令
 
 ```bash

@@ -7,6 +7,7 @@
 - **B（重点略读）**：摘要、引言、核心图/算法、实验设定、结论；写半页比较笔记。
 - **C（脉络浏览）**：摘要与一张代表图；记录它属于哪个篮子、解决什么问题。
 - 标签：`ALG` 算法，`KER` kernel，`SYS` serving/系统，`TRAIN` 训练/架构，`DIST` 分布式，`QUANT` 量化，`VISION` 视觉/视频，`BASE` dense 基线。
+- `B*` 表示工程技术资料或代码案例，不计入 74 篇学术论文统计；它们用于连接论文公式、kernel 和 serving 证据。
 
 阅读顺序由[总路线](https://github.com/Huasushis/sparse-linear-attention/blob/main/study/ROADMAP.md)决定，不由表中编号决定。共有 **8 篇 A0、7 篇 A1、26 篇 B、33 篇 C**；这是为了避免初期同时啃 15 篇精读论文。
 
@@ -39,6 +40,16 @@
 | `miccini2024towards` | GRU sub-8-bit | C | QUANT | 知道量化问题存在即可 |
 | `kim2026ssdi8` | SSDi8 | C | QUANT | state-space 量化接口 |
 | `nazari2026key` | State Reduction | C | ALG, QUANT | rank/state 压缩的后续方向 |
+
+## 工程补充：SSM/linear attention inference（不计入 74 篇）
+
+| Key | 简称 | 层级 | 标签 | 本阶段要看什么 |
+| --- | --- | --- | --- | --- |
+| `replayssm2026` | ReplaySSM | B* | ALG, KER, SYS | checkpoint + ring buffer、output-only decode、GDN speculative triangular solve、HBM traffic 与 profiling |
+
+ReplaySSM 是技术博客与 vLLM research fork，而不是 sparse-attention 学术论文。它放在
+linear attention 的 kernel/serving 邻接位置，用来练习“同一递推如何改变 cache policy 和
+执行顺序”；不进入核心复现池，也不改变上面的 74 篇计数。
 
 ## 3. Sparse attention：经典算法脉络（10 篇）
 

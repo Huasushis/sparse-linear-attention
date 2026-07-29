@@ -154,6 +154,11 @@ MInference、MoBA、NSA、SpargeAttention 中相关的一篇就必须升为 A；
 HiLS-Attention 同样遵循这个规则：先用第 14 章的教师示范建立位置；只有在你的选题落到
 learned chunk selector、query packing 或 native sparse training，并跑通独立算子证据后才升 A1。
 
+`B*` 是另一种标签：它表示工程博客、代码仓库或上游 RFC，不是论文等级。ReplaySSM
+属于这一类。它值得读，因为它把 GDN/Mamba-2 的递推、HBM traffic、Triton、CUDA Graph
+和 speculative serving 串成一条可验证的因果链；但它不应挤占 sparse mask 的主线，也不应
+把作者在 H100/B300 上的数字写成你在 107 上已经复现的结果。
+
 ## 16.5 每篇论文的三遍读法
 
 ### 第一遍：20 分钟建立地图
@@ -226,6 +231,7 @@ assignment -> index construction -> sparse prefill kernel -> 1M prefill 图”�
 | structured sparse | 哪种 block/window 密度能越过 dense baseline？ | fixed-mask reference、FlexAttention 或可用 kernel | density/latency crossover 图 |
 | dynamic selector | selector 是否吞掉 sparse kernel 的收益？ | MInference/MoBA/HiLS 类流程的简化版本 | selector 与 attention 分项计时 |
 | KV serving | 某 cache policy 如何改变 TPOT 与质量？ | StreamingLLM/H2O/QUEST 一条线 | 固定请求下的 TTFT/TPOT/质量表 |
+| recurrent-state serving（可选） | 不写回完整 SSM state 是否能降低 decode 的 memory traffic？ | ReplaySSM：小 ring buffer + output-only/flush | toy correctness、buffer sweep、kernel/E2E 分项计时 |
 
 先选择你能获得的代码、GPU 和模型权重所支持的一项。研究问题应由可验证资源约束，而不是
 由论文标题最酷决定。

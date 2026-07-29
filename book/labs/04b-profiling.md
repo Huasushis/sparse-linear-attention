@@ -144,6 +144,51 @@ sbatch --export=ALL,PROFILE_OPERATOR=reference_dense \
 模板还接受 `PROFILE_MODE`、`PROFILE_SEQ_LEN`、`PROFILE_DTYPE` 与 `PROFILE_WARMUP`。一次只改
 一个轴，并把实际值写进 run note；不要同时改 shape 和 operator 后声称差异来自 fusion。
 
+## 6. 可选：用 ReplaySSM 练习“先计时，再解释”
+
+[ReplaySSM](https://tridao.me/blog/2026/replayssm/) 是一个很适合练 profiling 的小型研究案例：
+它不改变 Mamba-2/GDN 的数学输出，而是把“每步写完整 state”改成“checkpoint + 最近输入
+buffer，满时 flush”。因此可以把一个明确的性能假设拆成可检查的证据链。它是 B* 工程补充项，
+不是必须下载大模型的任务。
+
+先在 CPU/FP64 上做正确性，不要先启动 vLLM：
+
+```text
+contract: B=H=1, T<=32, D_k/D_v 小，固定随机种子
+reference A: 逐 token recurrent state update
+reference B: output-only replay + buffer flush
+检查：每个 token 的 output、flush 后 checkpoint、rollback 后 buffer cursor
+```
+
+教师 reference 在 `tutorial_code/reference/replayssm.py`，回归测试可先运行：
+
+```bash
+python -m pytest tutorial_code/tests/test_replayssm.py -q
+```
+
+然后再打开 `tutorial_code/exercises/05_replayssm_todo.py`，自己补上单次 output-only
+重结合；完成后用 `python -m pytest tutorial_code/graders/test_exercise_replayssm.py -q`
+自测。测试文件刻意只覆盖教师 reference，不会替你完成 TODO。
+
+然后只改变 `buffer_len ∈ {4, 8, 16, 32}`，在 GPU 上用 CUDA Event 取 warm-up 后的中位数。
+每一行同时记录 kernel-only 和 end-to-end；不要把 Triton JIT、首次 CUDA Graph capture 或
+模型加载时间混进稳态数字。
+
+不同工具回答不同问题：
+
+| 工具 | ReplaySSM 实验中能回答什么 | 不能单独证明什么 |
+| --- | --- | --- |
+| CUDA Event | 固定 workload 的稳态延迟是否随 buffer length 变化 | 为什么变化、真实 HBM 字节数 |
+| PyTorch Profiler | 调用了哪些 op/kernel、flush 分支是否出现 | 完整硬件 memory throughput |
+| `nsys` | CPU launch、CUDA Graph、kernel 时间线和空洞 | 某个 kernel 的详细 cache/带宽 counter |
+| `ncu`（若权限/架构支持） | 关键 kernel 的 DRAM throughput、occupancy 等 counter | 端到端模型收益与质量 |
+| 代码数据流 + 字节模型 | 理论上减少了哪些 state load/store | 实际 cache 命中和调度开销 |
+
+特别注意：PyTorch trace 里看不到“这次写了多少 HBM”就不要填一个猜测数字。把 state
+shape、dtype、每步/每次 flush 的读写路径写成字节模型；若要声称实测带宽，再用 `ncu` 或
+等价硬件工具交叉验证。完整 vLLM fork、H100/B300 和 4B--550B 权重属于后续可选阅读，
+不属于 107 入门通过条件。
+
 ## 交付物
 
 在你的 run note 中提交小摘要，不提交 `.json/.nsys-rep/.ncu-rep`：

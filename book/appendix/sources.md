@@ -25,6 +25,13 @@
 - Kimi Team, [Kimi Linear](https://arxiv.org/abs/2510.26692)。
 - Hu et al., [HiLS-Attention](https://arxiv.org/abs/2607.02980)：近期 sparse algorithm/kernel 观察案例；先按 B 级阅读。
 
+## 工程补充案例
+
+- Liou & Dao, [ReplaySSM: Cache SSM Inputs, Not State](https://tridao.me/blog/2026/replayssm/)：SSM/linear-attention decode 的 cache policy、ring buffer、speculative rollback 与 kernel dataflow；按 `B*` 工程案例阅读。
+- [ReplaySSM reference repository](https://github.com/Johnny-Liou/ReplaySSM)：vLLM research fork；先读 README 和 Triton operator 文件，不要把仓库的大模型 benchmark 当作 107 的默认复现目标。
+- [vLLM ReplaySSM RFC #47572](https://github.com/vllm-project/vllm/issues/47572) 与 [draft PR #47576](https://github.com/vllm-project/vllm/pull/47576)：观察一个 kernel/serving 方法如何从独立研究代码进入上游，以及如何审查成熟度。
+- 注意：ReplaySSM 博客中的 `[PDF]` 链接是 [Gated DeltaNet-2](https://arxiv.org/abs/2605.22791)，应单独作为 GDN 后续论文理解，不能把它当成 ReplaySSM 的论文编号。
+
 完整的 74 篇 BibTeX 在仓库根目录的 `references/attention.bib`。按优先级标注的
 [阅读图](paper-map.md)从 `study/PAPER_MAP.md` 单一来源嵌入本站，因此网站与研究文件不会
 维护两份相互漂移的副本。

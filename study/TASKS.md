@@ -48,6 +48,7 @@
 - [ ] 重点阅读 FLA 中 GLA / Gated DeltaNet 的 layer、ops、tests、benchmarks 的对应关系。
 - [ ] 精读 Tiled Flash Linear Attention；略读 LASP/LASP-2，知道分布式序列并行解决的是什么。
 - [ ] 用同一套形状对比 FLA 算子和 dense baseline；先记录差异，不急着优化。
+- [ ] **可选工程案例：**按 [ReplaySSM 教学卡](../book/part3/13-fla-code-map.md#1312-replayssm) 做 `B=H=1,T<=32` 的 recurrent/output-only 对齐，再用 Lab 4B 测一个 buffer length；它是 B* 补充项，不改变 74 篇论文主线。
 
 **通过条件：** 可以追踪一个 FLA 算子从 layer 调用到 kernel / 测试 / benchmark，并能解释你测的到底是 forward、backward 还是 decode。
 
