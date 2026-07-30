@@ -75,69 +75,20 @@ dense/Flash baseline
 其中一条读到尽头再开始另一条：线性 state 会帮助你理解“固定容量记忆”，sparse KV 会帮助
 你理解“保留哪些历史”；二者的取舍在长上下文研究中经常并列出现。
 
-## 16.3 关卡式路径：每步只新增一个困难
+## 16.3 与学习控制台的接口：本章不维护第二套顺序
 
-### Gate A：Transformer、训练与 GPU 词汇够用
+唯一学习路线是[第 0 章：学习控制台](../start-here.md)中的 P0--P7，个人状态只在
+`work/progress.md` 勾选。本章负责解释“怎样阅读、复现和形成报告”，不再另设一套字母关卡。
 
-**阅读：** 第 1--6 章；先重看 3Blue1Brown Transformer/attention 视频。
+| 控制台阶段 | 何时使用本章 | 产物位置 |
+| --- | --- | --- |
+| P0--P2 | 只需知道 R0--R4 的边界；先完成前置与 dense 基线 | `work/notes/`、`work/labs/`、`work/runs/` |
+| P3--P4 | 用三遍读法核对 linear 论文与 FLA 实现证据 | `work/papers/`、`work/labs/` |
+| P5 | 用分层阅读和七问卡选择一个 sparse 候选 | `work/papers/`、`work/notes/` |
+| P6 | 重点使用 16.7--16.10，设计并运行受控复现 | `work/labs/`、`work/runs/` |
+| P7 | 使用 16.6，把前面的小证据整理进报告 | `work/report/draft.md` |
 
-**实践：** [Lab 0：环境](../labs/00-environment.md)、[Lab 1：dense attention](../labs/01-dense-attention.md)。
-
-**产物：** 一页形状图、一个 dense reference、一次正确的 GPU 计时。
-
-**通过：** 能解释 `QK^T`、causal softmax、prefill/decode、HBM/片上复用与异步计时。
-
-这一步不要求你会 Adam 推导或 CUDA 汇编；只要能在论文里认出训练、forward、backward 和
-inference 指标分别在说什么。
-
-### Gate B：先有可信 dense/Flash 基线
-
-**阅读：** 第 7--9 章，慢读 FlashAttention/FlashAttention-2 的 online softmax 与 IO 动机。
-
-**实践：** 用 `tutorial_code/reference/dense_attention.py`、练习和 benchmark 框架完成
-dense correctness + timing；之后可进入[Lab 4：GPU benchmark](../labs/04-gpu-benchmark.md)。
-
-**产物：** 一张注明 GPU、dtype、shape、mode 的 dense 表。
-
-**通过：** 知道“exact dense”与“没有 materialize `T×T`”可以同时成立，且不会用 CPU
-`time.time()` 给异步 GPU 计时。
-
-### Gate C：线性 state 与递推
-
-**阅读：** 第 10--12 章；慢读 `katharopoulos2020transformers`、`yang2024gated`、
-`yang2024delta`、`yang2025gated`。
-
-**实践：** [Lab 2：linear attention](../labs/02-linear-attention.md) 和
-[Lab 3：GDN/KDA](../labs/03-gdn-kda.md)。
-
-**产物：** linear state reference、GDN/KDA scalarization test、一次分块边界 state 对照。
-
-**通过：** 你能同时写出 scalar GDN 与 vector-gate KDA，并用数值而非口头证明退化关系。
-
-### Gate D：读懂一个真实 kernel 仓库
-
-**阅读：** 第 13 章；选 FLA 中 **KDA 或 GDN 一个**路径，不要两条并行硬啃。
-
-**实践：** [Lab 5：Triton](../labs/05-triton.md)，之后才做
-[Lab 6：FLA 与 107](../labs/06-fla-on-107.md)。
-
-**产物：** FLA dataflow card、选中 op 的 test 结果、一个小 operator benchmark。
-
-**通过：** 能从 layer 找到 op/naive/chunk/test，能指出你的运行处在 R1、R2 还是 R3。
-
-### Gate E：Sparse 的语义与内核分层
-
-**阅读：** 第 14--15 章；慢读 Longformer/BigBird 之一、MInference，以及 NSA/MoBA/
-SpargeAttention 三选一。
-
-**实践：** 先完成 [Lab 7：sparse mask 与 operator](../labs/07-sparse-mask.md)；再选择一个真实
-sparse kernel 项目做 R2/R3。
-
-**产物：** mask 图、七问卡、L0--L3 benchmark 设计、一份选题理由。
-
-**通过：** 能说清 selector 是否计时、是否 prefill/decode、block 粒度和 quality 证据。
-
-每个 Gate 的产物都能直接进入报告；不是“先学习、最后才写报告”的两套工作。
+如果本章任何段落与控制台的“当前阶段/下一步”冲突，以控制台为准；不要自行并行开启另一条路线。
 
 ## 16.4 A/B/C 论文要读到什么程度
 
@@ -199,30 +150,31 @@ assignment -> index construction -> sparse prefill kernel -> 1M prefill 图”�
 - 训练 token、data、optimizer、评测脚本和随机性；
 - 作者没有报告的地方。
 
-把信息填入仓库 `study/templates/` 中的 `paper-note.md` 与 `reproduction-card.md`；书站中
-不直接跳转这些根目录模板。这里的目标不是写长摘要，而是让下周的你能知道这次到底运行了
-什么。
+把信息写入 `work/papers/<citation-key>.md`。可以参考 `study/templates/paper-note.md` 与
+`study/templates/reproduction-card.md` 的结构，但不要直接修改模板。目标不是写长摘要，而是让
+下周的你能知道这次到底运行了什么。
 
 ## 16.6 研究笔记怎样自然长成报告
 
-每个 Gate 结束后，给报告增加一小节，而不是留到最后：
+每个 P 阶段结束后，给报告增加一小节，而不是留到最后：
 
-| 完成的关卡 | 报告中增加什么 | 证据来源 |
+| 完成的阶段 | 报告中增加什么 | 证据来源 |
 | --- | --- | --- |
-| A | 背景、术语、dense 为什么贵 | 形状图、复杂度推导 |
-| B | exact dense/Flash baseline | benchmark 表、计时方法 |
-| C | linear attention 分类与 GDN/KDA 原理 | 统一递推、scalarization test |
-| D | kernel 实现路线 | FLA dataflow card、test/benchmark |
-| E | sparse taxonomy 与选题 | mask 图、七问卡、L0--L3 计划 |
-| 后续 R3/R4 | 实验结果、局限、失败分析 | config、日志、图表、commit |
+| P0--P1 | 背景、术语、训练最小闭环与 GPU 测量语言 | 形状图、环境记录、复杂度推导 |
+| P2 | exact dense/Flash baseline | benchmark 表、计时与 profiler 方法 |
+| P3 | linear attention 分类与 GDN/KDA 原理 | 统一递推、scalarization test |
+| P4 | linear kernel 实现路线 | FLA dataflow card、test/benchmark |
+| P5 | sparse taxonomy 与候选选择 | mask 图、七问卡、选题理由 |
+| P6 | 实验结果、局限、失败分析 | config、日志摘要、图表、commit |
+| P7 | 统一论证与结论边界 | 前面所有可追溯证据 |
 
-原始报告框架在仓库 `study/templates/report-outline.md`。保留第一版的解释，即使它不成熟；
+报告工作文件是 `work/report/draft.md`；`study/templates/report-outline.md` 只提供结构参考。保留第一版的解释，即使它不成熟；
 后续阅读后再添加“我原先以为 X，现在发现 Y，因为 Z”的修订。这种变化本身就是调研的
 价值。
 
 ## 16.7 从教程进入你的第一个小研究题
 
-完成 Gate E 后，不要再增加十个新论文方向。选一个问题，限制变量，做到一份有边界的
+进入 P6 后，不要再增加十个新论文方向。选一个问题，限制变量，做到一份有边界的
 结论。以下不是命题，而是可选的起跑线：
 
 | 方向 | 最小问题 | 首先读/跑什么 | 成功的最低证据 |
@@ -292,7 +244,7 @@ checkpoint、Hugging Face cache、编译产物和大数据只留在用户目录/
 
 ## 16.11 第一份阶段性研究包
 
-完成前述关卡后，你应当拥有下面这些小而完整的东西：
+完成 P0--P6 后，你应当拥有下面这些小而完整的东西：
 
 ```text
 1. Transformer/dense/Flash 的一页背景说明
@@ -311,7 +263,7 @@ checkpoint、Hugging Face cache、编译产物和大数据只留在用户目录/
 ## 常见误区
 
 **误区 1：先学完所有前置再开始。**
-前置知识永远学不完。用 Gate 的通过条件决定何时继续；遇到真正阻塞再回补。
+前置知识永远学不完。用学习控制台中当前 P 阶段的通过条件决定何时继续；遇到真正阻塞再回补。
 
 **误区 2：论文笔记等于中文翻译。**
 好的笔记写问题、改动、代价、证据和你的疑问；不是逐段转述 abstract。
@@ -327,10 +279,10 @@ checkpoint、Hugging Face cache、编译产物和大数据只留在用户目录/
 
 ## 最后练习：写下你的第一步
 
-不要安排日期，只写下下一次学习要完成的一个 Gate 内动作。例如：
+不要安排日期，只在 `work/progress.md` 写下当前 P 阶段的一个动作。例如：
 
-> 我会看完 3Blue1Brown 的 attention 部分，用 `B=1,H=1,T=4,D=2` 手画 `QK^T` 和 causal
-> mask，完成 Lab 1 的 reference 测试，并写四句我的理解。
+> 我当前在 P0。下一步看完 3Blue1Brown 的 attention 部分，用 `B=1,H=1,T=4,D=2`
+> 手画 `QK^T` 和 causal mask，并填写 `work/notes/p0-transformer-refresh.md` 的形状表。
 
 完成后保留你的原话，再回来对照本书。若你能指出哪一句不准确以及为什么，说明你已经在
 真正学习，而不是被动收集名词。
@@ -345,4 +297,5 @@ checkpoint、Hugging Face cache、编译产物和大数据只留在用户目录/
 - 用四句论文卡和七问卡说明你要研究的下一个问题；
 - 带着日志、图、公式或代码片段来讨论，而不需要假装自己已经全懂。
 
-到这里，规划已变成一门可以一步步完成的课程。下一次从 Gate A 的一个小动作开始即可。
+到这里，规划已变成一门可以一步步完成的课程。下一次回到学习控制台，只做
+`work/progress.md` 中记录的那个“下一步”。

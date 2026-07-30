@@ -3,6 +3,15 @@
   --sla-muted: #5d6a73;
   --sla-rule: #d8e0e3;
   --sla-accent: #007d74;
+  --sla-table-head: #edf3f4;
+}
+
+[data-md-color-scheme="slate"] {
+  --sla-ink: #edf2f4;
+  --sla-muted: #b8c3c9;
+  --sla-rule: #43515a;
+  --sla-accent: #54bdb3;
+  --sla-table-head: #27343c;
 }
 
 .md-content {
@@ -13,7 +22,7 @@
 .md-typeset h2,
 .md-typeset h3 {
   color: var(--sla-ink);
-  letter-spacing: -0.018em;
+  letter-spacing: 0;
 }
 
 .md-typeset h1 {
@@ -39,7 +48,7 @@
 }
 
 .md-typeset table:not([class]) th {
-  background: #edf3f4;
+  background: var(--sla-table-head);
   color: var(--sla-ink);
 }
 

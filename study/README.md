@@ -2,15 +2,17 @@
 
 这不是一门要求一次学完的课程，而是研究过程的操作手册。每一阶段的“通过条件”比学习时长更重要。
 
+网站的统一入口是 `book/start-here.md`；个人进度和作业统一放在 `work/`。`study/` 保留研究规范、论文分层、模板与教师记录，不再保存个人勾选状态。
+
 | 你现在想做什么 | 先看什么 |
 | --- | --- |
-| 不知道整条路线长什么样 | [总路线](ROADMAP.md) |
+| 不知道整条路线长什么样 | [第 0 章：学习控制台](../book/start-here.md) |
 | 不知道 74 篇怎么取舍 | [论文阅读图](PAPER_MAP.md) |
 | 不明白“复现”究竟要交什么 | [复现规范](REPRODUCTION.md) |
 | 不知道 benchmark 该量什么 | [Benchmark 规范](BENCHMARK.md) |
 | 看完一篇论文后怎么留下成果 | [论文笔记模板](templates/paper-note.md) |
 | 跑了一次实验后怎么记录 | [实验记录模板](templates/experiment-record.md) |
-| 想知道下一件具体要做什么 | [任务表](TASKS.md) |
+| 想知道下一件具体要做什么 | [学习控制台](../book/start-here.md)与[个人进度](../work/progress.md) |
 
 ## 术语的约定
 

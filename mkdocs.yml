@@ -3,8 +3,9 @@ site_description: 从 Transformer 基础、GPU kernel 到 sparse / linear attent
 site_url: https://huasushis.github.io/sparse-linear-attention/
 docs_dir: book
 repo_name: Huasushis/sparse-linear-attention
-repo_url: https://github.com/Huasushis/sparse-linear-attention
-edit_uri: edit/main/
+# 教程尚未合并到 main；合并后再恢复为仓库根地址。
+repo_url: https://github.com/Huasushis/sparse-linear-attention/tree/codex/tutorial-book
+edit_uri: ""
 
 theme:
   name: material
@@ -72,7 +73,8 @@ extra_javascript:
 
 nav:
   - 首页: index.md
-  - 使用这本书: 00-how-to-use.md
+  - 第 0 章：学习控制台: start-here.md
+  - 课程规则：怎样学: 00-how-to-use.md
   - 第一部：把 Transformer 变成可操作的对象:
       - 记号与形状: appendix/notation.md
       - 1. 从张量理解 Transformer: part1/01-transformer-from-tensors.md
@@ -105,8 +107,6 @@ nav:
       - Lab 6. 107 上的 FLA smoke test: labs/06-fla-on-107.md
       - Lab 7. Sparse mask 与 operator: labs/07-sparse-mask.md
   - 附录:
-      - 研究路线与交付物: appendix/research-plan.md
-      - 可勾选研究任务表: appendix/task-board.md
       - 74 篇论文阅读图: appendix/paper-map.md
       - Slurm 与远程协作: appendix/slurm-and-git.md
       - 代码目录说明: appendix/code-guide.md

@@ -6,9 +6,9 @@
 
 ## 阅读入口
 
-- 网站内容位于 [`book/`](book/)；导航配置在 [`mkdocs.yml`](mkdocs.yml)。
-- 从 [`book/index.md`](book/index.md) 或 [`book/00-how-to-use.md`](book/00-how-to-use.md) 开始。
-- 研究任务表、74 篇分级阅读图和长版模板仍保留在 [`study/`](study/)。
+- **第一次打开仓库只看 [`book/start-here.md`](book/start-here.md)**：它是第 0 章与统一学习控制台，路线、任务、交付物和通过条件都在同一页。
+- 个人进度只在 [`work/progress.md`](work/progress.md) 勾选；书面作业放 [`work/`](work/)，代码作业放 [`tutorial_code/exercises/`](tutorial_code/exercises/)。
+- 网站内容位于 [`book/`](book/)；导航配置在 [`mkdocs.yml`](mkdocs.yml)。`study/` 保留研究规范、论文分级、模板和教师预跑记录，不是个人答题区。
 - 已分类的 74 篇 BibTeX 位于 [`references/attention.bib`](references/attention.bib)。
 
 ## 本地构建在线书

@@ -9,7 +9,7 @@
 - 标签：`ALG` 算法，`KER` kernel，`SYS` serving/系统，`TRAIN` 训练/架构，`DIST` 分布式，`QUANT` 量化，`VISION` 视觉/视频，`BASE` dense 基线。
 - `B*` 表示工程技术资料或代码案例，不计入 74 篇学术论文统计；它们用于连接论文公式、kernel 和 serving 证据。
 
-阅读顺序由[总路线](https://github.com/Huasushis/sparse-linear-attention/blob/main/study/ROADMAP.md)决定，不由表中编号决定。共有 **8 篇 A0、7 篇 A1、26 篇 B、33 篇 C**；这是为了避免初期同时啃 15 篇精读论文。
+阅读顺序由网站的“第 0 章：学习控制台”决定，不由表中编号决定；仓库中的背景版路线保存在 `study/ROADMAP.md`。共有 **8 篇 A0、7 篇 A1、26 篇 B、33 篇 C**；这是为了避免初期同时啃 15 篇精读论文。
 
 ## 1. Linear attention：基础与现代架构（12 篇）
 

@@ -62,22 +62,11 @@
 
 ## 唯一必修主线
 
-后续页面可能按主题回指章节，但不再提供另一套互相冲突的“推荐顺序”。第一次学习按下面
-五个关卡推进；括号内是可以按需回看的参考，而不是新的并行任务。
+为了避免“课程说明一套顺序、研究路线一套顺序、任务表又一套顺序”，路线统一为 P0--P7，并只在[第 0 章：学习控制台](start-here.md)维护。那一页把每个阶段的阅读、动手任务、交付位置和通过条件放在一起。
 
-1. **关卡 A，语言与最小训练：** 第 1、2、4 章，完成第 1 章形状题；重看 3Blue1Brown
-   时把不懂的符号记下来。第 3 章需要外积/结合律时回看第 4 章对应小节。
-2. **关卡 B，state 与 GPU 测量：** 第 3、5、6 章和 Lab 0；交出一份环境记录，并能区分
-   算法复杂度、访存与实际计时。
-3. **关卡 C，dense baseline：** 第 7--9 章和 Lab 1、4、5；先验证 dense reference，
-   再理解 FlashAttention/Triton，分别测 prefill 与 decode。
-4. **关卡 D，linear 主线：** 第 10--13 章和 Lab 2、3、6；完成三种 linear 表示、
-   GDN/KDA state 等价实验，再进入 FLA。
-5. **关卡 E，sparse 主线：** 第 14--16 章和 Lab 7；先做 structured sparse oracle，
-   再从 NSA/MoBA/SpargeAttention 中只选一个现代方法升级复现。
+个人完成状态只写在仓库的 `work/progress.md`；概念作业写在 `work/notes/`，Lab 记录写在 `work/labs/`，代码 TODO 写在 `tutorial_code/exercises/`。本页只解释学习方法，不再维护第二份任务顺序。
 
-每个关卡的可勾选任务和交付物在[研究路线与交付物](appendix/research-plan.md)；74 篇论文的
-A0/A1/B/C 阅读层级在[论文阅读图](appendix/paper-map.md)。
+74 篇论文的 A0/A1/B/C 阅读层级仍在[论文阅读图](appendix/paper-map.md)，但论文表负责“取舍”，不负责决定你今天做什么。
 
 !!! warning "不要把大模型训练当作第一项作业"
     这条路线先用小张量、算子级测试和已有实现建立判断力。完整预训练需要的数据、预算和工程组织远超当前研究问题；它不是衡量你是否理解 attention kernel 的标准。
