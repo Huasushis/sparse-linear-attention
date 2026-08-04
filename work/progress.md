@@ -2,9 +2,9 @@
 
 > 这是唯一需要勾选的个人任务表。完成某项且满足对应通过条件后，把 `[ ]` 改为 `[x]`。不要在网站或 `study/TASKS.md` 记录进度。
 
-**当前阶段：** P0
+**当前阶段：** P1
 
-**下一步：** 在 `notes/p0-transformer-refresh.md` 补充具体观看资源，然后进行 P0 口头检查；通过后进入 P1。
+**下一步：** 阅读第 2 章，然后按第 2--6 章的必修路线学习；开始 Lab 0 时同步填写 `labs/lab00-environment.md`。
 
 **当前卡点：** 无；遇到问题时写“实际看到什么、已经试过什么”。
 
@@ -15,7 +15,7 @@
 - [x] 重看 3Blue1Brown 的 Transformer / attention 视频，记录不懂的符号。
 - [x] 阅读 [`book/part1/01-transformer-from-tensors.md`](../book/part1/01-transformer-from-tensors.md)。
 - [x] 独立填写 [`notes/p0-transformer-refresh.md`](notes/p0-transformer-refresh.md)。
-- [ ] 不看资料解释 `Q/K/V`、causal mask、prefill/decode、$O(T^2)$，以及“计算量更小”为什么不保证 GPU 更快（等待修订后的口头检查）。
+- [x] 不看资料解释 `Q/K/V`、causal mask、prefill/decode、$O(T^2)$，以及“计算量更小”为什么不保证 GPU 更快。
 
 ## P1：最小前置知识与环境
 
