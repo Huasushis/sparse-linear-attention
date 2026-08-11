@@ -20,8 +20,8 @@
 ## P1：最小前置知识与环境
 
 - [x] 完成第 2--6 章的必修部分；数学章节按需回看。
-- [ ] 完成 [Lab 0](../book/labs/00-environment.md)，填写 [`labs/lab00-environment.md`](labs/lab00-environment.md)。
-- [ ] 在 107 的 GPU job 中记录 GPU、driver、软件版本、commit、job id 和命令。
+- [x] 完成 [Lab 0](../book/labs/00-environment.md)，填写 [`labs/lab00-environment.md`](labs/lab00-environment.md)。
+- [x] 在 107 的 GPU job 中记录 GPU、driver、软件版本、commit、job id 和命令。
 
 ## P2：Dense attention 与性能地基
 
