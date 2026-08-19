@@ -104,6 +104,10 @@ def main() -> None:
                 with record_function("attention_step"):
                     output = marked_call("sla_attention_step", fn)
         torch.cuda.synchronize(device)
+        # The cluster may clean a node-local temporary directory while a long
+        # profile is running.  Recreate it immediately before Kineto opens the
+        # output file instead of relying only on the pre-profile mkdir above.
+        args.trace.parent.mkdir(parents=True, exist_ok=True)
         prof.export_chrome_trace(str(args.trace))
         print(prof.key_averages(group_by_input_shape=True).table(
             sort_by="self_cuda_time_total",

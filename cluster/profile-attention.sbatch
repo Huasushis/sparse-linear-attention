@@ -55,12 +55,43 @@ PROFILE_ARGS=(
 
 if [[ "${RUN_TORCH_PROFILER:-1}" == "1" ]]; then
     echo "=== PyTorch profiler ==="
-    python -m tutorial_code.profiling.profile_attention \
-        "${PROFILE_ARGS[@]}" \
-        --steps 5 \
-        --trace "$JOB_TMP/torch-profiler-${SLURM_JOB_ID}.json" \
-        | tee "$REPO_ROOT/artifacts/torch-profiler-summary-${SLURM_JOB_ID}.txt"
-    cp "$JOB_TMP/torch-profiler-${SLURM_JOB_ID}.json" "$REPO_ROOT/artifacts/"
+    PROFILE_TRACE="$JOB_TMP/torch-profiler-${SLURM_JOB_ID}.json"
+    PROFILE_SUMMARY="$REPO_ROOT/artifacts/torch-profiler-summary-${SLURM_JOB_ID}.txt"
+    PROFILE_STDOUT="$JOB_TMP/torch-profiler-${SLURM_JOB_ID}.stdout"
+    PROFILE_STDERR="$JOB_TMP/torch-profiler-${SLURM_JOB_ID}.stderr"
+    profile_ok=0
+    for attempt in 1 2; do
+        mkdir -p "$JOB_TMP"
+        rm -f "$PROFILE_TRACE" "$PROFILE_STDOUT" "$PROFILE_STDERR"
+        set +e
+        python -m tutorial_code.profiling.profile_attention \
+            "${PROFILE_ARGS[@]}" \
+            --steps 5 \
+            --trace "$PROFILE_TRACE" \
+            >"$PROFILE_STDOUT" 2>"$PROFILE_STDERR"
+        profile_status=$?
+        set -e
+        cat "$PROFILE_STDOUT"
+        cat "$PROFILE_STDERR" >&2
+        if [[ $profile_status -eq 0 && -s "$PROFILE_TRACE" ]]; then
+            cp "$PROFILE_STDOUT" "$PROFILE_SUMMARY"
+            cp "$PROFILE_TRACE" "$REPO_ROOT/artifacts/"
+            profile_ok=1
+            break
+        fi
+        trace_exists=no
+        if [[ -s "$PROFILE_TRACE" ]]; then
+            trace_exists=yes
+        fi
+        echo "profiler attempt $attempt failed: status=$profile_status trace_exists=$trace_exists" >&2
+        # Refresh NFS-backed environment metadata before the one bounded retry.
+        cd .
+        ls -l "$SLA_ENV/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so" >/dev/null
+    done
+    if [[ $profile_ok -ne 1 ]]; then
+        echo "PyTorch profiler failed after two attempts" >&2
+        exit 4
+    fi
 fi
 
 if [[ "${RUN_NSYS:-0}" == "1" ]]; then
