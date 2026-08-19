@@ -2,11 +2,11 @@
 
 > 这是唯一需要勾选的个人任务表。完成某项且满足对应通过条件后，把 `[ ]` 改为 `[x]`。不要在网站或 `study/TASKS.md` 记录进度。
 
-**当前阶段：** P1
+**当前阶段：** P2
 
-**下一步：** 阅读第 2 章，然后按第 2--6 章的必修路线学习；开始 Lab 0 时同步填写 `labs/lab00-environment.md`。
+**下一步：** 修复并完成 Lab 4B profiler 运行，记录一条可证伪的性能观察；随后完成 Lab 5。
 
-**当前卡点：** 无；遇到问题时写“实际看到什么、已经试过什么”。
+**当前卡点：** 107 上 Lab 4B 的两次 profiler 作业未完整成功；保留 job `40056`、`40063` 的错误证据并逐项排查。
 
 完整路线、站内阅读链接、交付位置和通过条件统一见网站的“第 0 章：学习控制台”。
 
@@ -25,8 +25,8 @@
 
 ## P2：Dense attention 与性能地基
 
-- [ ] 完成第 7--9 章与 Lab 1，独立填写 dense attention TODO。
-- [ ] 完成 Lab 4；分别测 prefill/decode，留下包含完整配置的 benchmark 表。
+- [x] 完成第 7--9 章与 Lab 1，独立填写 dense attention TODO。
+- [x] 完成 Lab 4；分别测 prefill/decode，留下包含完整配置的 benchmark 表。
 - [ ] 完成 Lab 4B；用 profiler 证据解释一个观察。
 - [ ] 完成 Lab 5 的 Triton vector-add TODO 与 grader。
 
