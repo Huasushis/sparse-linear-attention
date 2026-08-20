@@ -8,6 +8,10 @@ workload: torch_sdpa / prefill / B=1,H=4,T=512,D=64 / BF16
 
 能推翻我的观测: 不知道
 
+事后补充（不是运行前预注册）：若保持 operator、mode、`B/H/D`、dtype 和 kernel 数不变，
+增大 `T` 后未插桩 latency 随工作量明显增长，且外部时间线显示 CPU launch 到 GPU 执行之间
+没有明显空洞，那么“主要受 launch 限制”应被削弱或推翻。
+
 ## 失败记录
 
 - job `40056`：环境报告成功后，profiler 子进程报
@@ -37,6 +41,13 @@ workload: torch_sdpa / prefill / B=1,H=4,T=512,D=64 / BF16
 
 ## 留给我的解释
 
-- 这条证据是否支持“主要受 launch 限制”： 支持
-- 原假设保留、修改还是放弃，理由：相当多的时间花在 CPU 上和profile 的 activity buffer request。GPU 上耗时最多的是flash attention上，主要是flash_fwd_splitkv_kernel和flash_fwd_combine_kernel。由于每个step只launch了两个kernel，说明launch overhead占比不小。
-- 下一次只改变的变量：？
+- 这条证据是否支持“主要受 launch 限制”：只能把它保留为**待验证假设**，还不能下结论。
+- 原假设保留、修改还是放弃，理由：实测每个 step 只有两个 CUDA kernel，说明该 workload
+  的 GPU 工作很短，固定 launch 开销可能相对重要；但“kernel 少”本身不能证明 launch
+  overhead 占比大。表中的 `Activity Buffer Request` 和大部分 CPU 时间来自 profiler
+  插桩/收集，不能当作未插桩程序的真实开销。当前没有 `nsys` 时间线，也没有 `ncu`
+  counter，因此只能说“launch-bound 仍是候选解释”，不能排除 compute、memory 或框架固定开销。
+- 下一次只改变的变量：把 `T` 从 512 改为 1024，其余保持
+  `torch_sdpa / prefill / B=1,H=4,D=64 / BF16` 不变；分别比较未插桩 benchmark p50、每步
+  kernel 数和 kernel CUDA time。若 kernel 数仍为 2 而 latency 随 `T` 明显增长，则主要瓶颈
+  更可能在 kernel 工作量而非纯 launch；若 latency 变化很小，才会加强固定开销假设。
