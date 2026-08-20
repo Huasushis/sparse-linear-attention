@@ -37,6 +37,6 @@ workload: torch_sdpa / prefill / B=1,H=4,T=512,D=64 / BF16
 
 ## 留给我的解释
 
-- 这条证据是否支持“主要受 launch 限制”：
-- 原假设保留、修改还是放弃，理由：
-- 下一次只改变的变量：
+- 这条证据是否支持“主要受 launch 限制”： 支持
+- 原假设保留、修改还是放弃，理由：相当多的时间花在 CPU 上和profile 的 activity buffer request。GPU 上耗时最多的是flash attention上，主要是flash_fwd_splitkv_kernel和flash_fwd_combine_kernel。由于每个step只launch了两个kernel，说明launch overhead占比不小。
+- 下一次只改变的变量：？
