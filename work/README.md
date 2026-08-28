@@ -10,7 +10,7 @@
 - `labs/`：每个 Lab 的命令、环境、输出摘要、失败和解释。
 - `runs/`：可提交 Git 的小型实验摘要；原始大日志放仓库根目录的 `artifacts/`。
 - `report/draft.md`：逐阶段生长的学习草稿。
-- `report/final.md`：算法、kernel、serving 与受控复现的最终 Markdown 报告。
+- `report/final.md`：算法、kernel、serving、论文尺度复现与 MQAR 效果实验的最终 Markdown 报告。
 
 代码作业不放在这里，而在 `tutorial_code/exercises/` 中填写 `TODO`。
 

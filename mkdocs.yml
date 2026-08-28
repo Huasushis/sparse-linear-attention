@@ -3,8 +3,8 @@ site_description: 从 Transformer 基础、GPU kernel 到 sparse / linear attent
 site_url: https://huasushis.github.io/sparse-linear-attention/
 docs_dir: book
 repo_name: Huasushis/sparse-linear-attention
-# 教程尚未合并到 main；合并后再恢复为仓库根地址。
-repo_url: https://github.com/Huasushis/sparse-linear-attention/tree/codex/tutorial-book
+# 当前学习与报告都在 study 分支；合并到 main 后再恢复为仓库根地址。
+repo_url: https://github.com/Huasushis/sparse-linear-attention/tree/study/sparse-linear-attention
 edit_uri: ""
 
 theme:
@@ -96,6 +96,7 @@ nav:
       - 14. 稀疏方法分类学: part4/14-sparse-taxonomy.md
       - 15. Sparse kernel 与 serving: part4/15-sparse-kernels-serving.md
       - 16. 从论文到复现卡: part4/16-reading-and-reproduction-path.md
+  - 调研与复现报告: final-report.md
   - Labs:
       - Lab 0. 环境与可复跑记录: labs/00-environment.md
       - Lab 1. Dense attention reference: labs/01-dense-attention.md
