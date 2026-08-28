@@ -441,7 +441,7 @@ def run_nsa(args: argparse.Namespace) -> list[dict[str, object]]:
     q_heads = kv_heads * heads_per_group
     key_dim, value_dim = args.nsa_key_dim, args.nsa_value_dim
     block_size, selected_blocks = 64, 16
-    for length in (8192, 16384, 32768, 65536):
+    for length in args.nsa_lengths:
         shape = {
             "B": 1,
             "T": length,
@@ -538,6 +538,7 @@ def main() -> None:
     parser.add_argument("--rep-ms", type=int, default=100)
     parser.add_argument("--nsa-key-dim", type=int, default=128)
     parser.add_argument("--nsa-value-dim", type=int, default=128)
+    parser.add_argument("--nsa-lengths", type=int, nargs="+", default=(8192, 16384, 32768, 65536))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not torch.cuda.is_available():
