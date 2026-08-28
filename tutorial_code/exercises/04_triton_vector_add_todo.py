@@ -21,6 +21,8 @@ if triton is not None:
         x = tl.load(x_ptr + offsets, mask=mask, other=0.0)
         y = tl.load(y_ptr + offsets, mask=mask, other=0.0)
         # TODO: store x + y at output_ptr + offsets, using the same boundary mask.
+        out = x + y
+        tl.store(output_ptr + offsets, out, mask=mask)
 
 else:
     _vector_add_kernel = None
