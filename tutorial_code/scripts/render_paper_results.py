@@ -33,6 +33,10 @@ def style_axis(ax, *, xlabel: str, ylabel: str) -> None:
     ax.spines[["top", "right"]].set_visible(False)
 
 
+def length_labels(lengths: list[int]) -> list[str]:
+    return [f"{length // 1024}K" if length >= 1024 else str(length) for length in lengths]
+
+
 def render_delta(data: dict, output: Path) -> None:
     rows = [row for row in data["rows"] if row["status"] == "ok"]
     fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.0), sharey=False)
@@ -60,6 +64,8 @@ def render_delta(data: dict, output: Path) -> None:
                 color=COLORS[str(dim)],
             )
         ax.set_xscale("log", base=2)
+        ax.set_xticks(lengths)
+        ax.set_xticklabels(length_labels(lengths))
         ax.set_title(title)
         style_axis(ax, xlabel="Sequence length", ylabel="chunkwise speedup over recurrent")
         ax.legend(frameon=False)
@@ -87,8 +93,11 @@ def render_kimi(data: dict, output: Path) -> None:
                 label=label,
                 color=color,
             )
+            lengths = [row["shape"]["T"] for row in selected]
         ax.set_xscale("log", base=2)
         ax.set_yscale("log", base=2)
+        ax.set_xticks(lengths)
+        ax.set_xticklabels(length_labels(lengths))
         ax.set_title(title)
         style_axis(ax, xlabel="Sequence length", ylabel="Median latency (ms)")
         ax.legend(frameon=False)
@@ -144,8 +153,11 @@ def render_nsa(data: dict, output: Path) -> None:
                 label=label,
                 color=color,
             )
+            lengths = [row["shape"]["T"] for row in selected]
         ax.set_xscale("log", base=2)
         ax.set_yscale("log", base=2)
+        ax.set_xticks(lengths)
+        ax.set_xticklabels(length_labels(lengths))
         ax.set_title(title)
         style_axis(ax, xlabel="Sequence length", ylabel="Median latency (ms)")
         ax.legend(frameon=False)

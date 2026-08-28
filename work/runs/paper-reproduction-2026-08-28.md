@@ -16,6 +16,7 @@
 - `46740`：FLA 官方测试、DeltaNet Figure 1 路线、Kimi Figure 2 路线、NSA 原始维度探测；
 - `46741`：两层 GDN/KDA MQAR 训练；
 - `46839`：A100/FLA 支持维度的 NSA 8K--64K rerun；
+- `46856`：NSA 64K，1000 ms warmup / 6500 ms repeat 跨节点确认；
 - `46745`、`46842`：DeltaNet、KDA、NSA profiler；
 - `46848`：KDA channel-wise chunk 前反向官方测试。
 
@@ -24,8 +25,10 @@
 ```text
 artifacts/paper-46740/{delta,kimi,nsa}.json
 artifacts/paper-46740/test-{gdn,kda,dplr,nsa}.txt
+artifacts/sla-kda-correct-46848.out
 artifacts/mqar-46741/mqar.json
 artifacts/nsa-46839/nsa.json
+artifacts/nsa-confirm-46856.json
 artifacts/profile-46745/{delta,kda}*.json
 artifacts/profile-46842/{delta,kda,nsa}*.json
 ```
@@ -47,7 +50,7 @@ benchmark driver。NSA rerun 固定在 `59110bb`。
 | 测试 | 结果 |
 | --- | ---: |
 | GDN chunk 16/32/64，output/state/全部梯度 | 3 passed |
-| KDA channel-wise chunk，output/state/全部梯度 | job `46848` |
+| KDA channel-wise chunk，FP16/BF16、GVA、chunk 32/64、output/state/全部梯度 | 16 passed |
 | DPLR chunk 多 shape，output/state/全部梯度 | 11 passed |
 | NSA selected 多 shape，output/dQ/dK/dV | 6 passed |
 
@@ -110,6 +113,13 @@ KDA 在 step 3500/4000/5000 的验证准确率为 55.41%/97.22%/99.29%。
 | 64K | 343.004 | 37.001 | 105.870 | 1291.925 | 186.869 | 502.871 |
 
 64K 额外峰值 MiB：dense `8352`，selected `3104`，selector-included `7234`。
+
+64K 长 repeat 确认（job `46856`，A100 `anode02`）：
+
+| mode | dense | selected | + selector | selected speedup | full speedup |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fwd | 326.374 | 23.417 | 59.743 | 13.94× | 5.46× |
+| fwd+bwd | 1131.922 | 139.381 | 332.676 | 8.12× | 3.40× |
 
 ## 8. Profiler 摘要
 

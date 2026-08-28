@@ -699,11 +699,11 @@ kernel 时间和总时间怎样变化。`ncu` 的 DRAM throughput、achieved occ
 | 教程仓库 | `study/sparse-linear-attention`；paper driver 从 `97f750d` 引入，NSA rerun 为 `59110bb` |
 | FLA 仓库 | `~/sparse_linear/flash-linear-attention` |
 | FLA commit | `d1ce07369d581813553f30a750af3b6b5f9af6a9` |
-| 核心作业 | operator `46740`；MQAR `46741`；NSA rerun `46839`；profiler `46745/46842` |
+| 核心作业 | operator `46740`；MQAR `46741`；NSA `46839` 与 64K confirm `46856`；profiler `46745/46842` |
 | GPU | NVIDIA A100-SXM4-80GB（81151.75 MiB） |
 | 软件 | Python 3.12.13；PyTorch 2.11.0+cu128；CUDA runtime 12.8；Triton 3.6.0 |
 | Python 环境 | `~/sparse_linear/.envs/sla-tutorial-py312` |
-| 原始产物 | 107：`artifacts/paper-46740/`、`artifacts/mqar-46741/`、`artifacts/nsa-46839/`、`artifacts/profile-*` |
+| 原始产物 | 107：`artifacts/paper-46740/`、`artifacts/sla-kda-correct-46848.out`、`artifacts/mqar-46741/`、`artifacts/nsa-46839/`、`artifacts/nsa-confirm-46856.json`、`artifacts/profile-*` |
 | 可提交记录 | [`work/runs/paper-reproduction-2026-08-28.md`](https://github.com/Huasushis/sparse-linear-attention/blob/study/sparse-linear-attention/work/runs/paper-reproduction-2026-08-28.md) |
 
 作业启动日志记录计算节点环境。`46740` 运行期间仓库 HEAD 随后同步到 `562fbbf`，而
@@ -752,13 +752,15 @@ FLA 官方测试以 naive/reference 实现为基准，同时检查 output、fina
 | 算子 | 覆盖内容 | 结果 |
 | --- | --- | ---: |
 | GDN chunk | chunk 16/32/64；`o, ht, dq, dk, dv, dbeta, dg, dh0` | 3 passed |
-| KDA chunk | channel gate；`o, ht` 与全部输入梯度 | 运行记录见 job `46848` |
+| KDA chunk | FP16/BF16、channel gate、GVA、chunk 32/64；`o, ht` 与全部输入梯度 | 16 passed |
 | DPLR chunk | 多个 B/T/H/D、safe gate、recompute；全部输入梯度 | 11 passed |
 | NSA selected | D=60/64/100/128、GQA、block 32；`o,dq,dk,dv` | 6 passed |
 
 例如 NSA `B=3,T=1024,Hkv=2,Hq=32,D=128` 的 BF16 测试中，output 最大绝对差
-`0.001953`，`dK/dV` 最大绝对差 `0.007812`；DPLR 测试由相对误差规则通过全部梯度。
-这些 correctness gate 通过后才执行长序列计时。
+`0.001953`，`dK/dV` 最大绝对差 `0.007812`。KDA 最后一组
+`B=2,T=1024,H/HV=2/8,D=128,BF16` 同时覆盖 GVA、L2 norm 和 kernel 内 gate，output
+最大绝对差 `0.001465`，所有输入梯度按官方误差规则通过。这些 correctness gate 通过后
+才执行长序列计时。
 
 ### 8.2 DeltaNet：复现 recurrent/chunkwise speedup
 
@@ -837,12 +839,20 @@ key-value 映射。代价是本实验中参数量多 5.5%，训练吞吐低约 2
 
 ![NSA 长序列前向与前反向时间](figures/nsa-long-sequence.png)
 
-64K 时，给定索引的 selected kernel 在 forward 和 forward+backward 上分别比 dense 快
-9.27× 与 6.91×；把 compression/top-k 加入以后，完整路径仍快 3.24× 与 2.57×。在 8K
-时 selector 路径的 forward 与 dense 接近，forward+backward 约为 dense 的 1.96 倍；
-到 32K 才出现完整前反向加速。selector 占比随着长度变化：selected forward 从 37.0 ms
-增加到完整路径 105.9 ms，说明动态稀疏的主要优化空间已经从 attention kernel 转移到
-compression、top-k 和 index 生成。
+`46839` 的 64K 点来自一个 100 ms repeat 窗口；dense backward 单次已经超过该窗口。为此
+另在 A100 节点 `anode02` 上用 1000 ms warmup、6500 ms repeat 重测 64K：
+
+| 64K confirm | dense | selected | + selector | selected speedup | 完整路径 speedup |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| forward | 326.374 | 23.417 | 59.743 | 13.94× | 5.46× |
+| forward+backward | 1131.922 | 139.381 | 332.676 | 8.12× | 3.40× |
+
+两张 A100 上，64K selected forward speedup 落在 9.27×--13.94×，完整路径为
+3.24×--5.46×；forward+backward 分别为 6.91×--8.12× 和 2.57×--3.40×。同型号节点
+仍会受时钟、共置负载和 Triton autotune 选择影响，因此曲线用于说明扩展趋势，精确回归
+应固定节点并锁定功耗/时钟。两次实验都显示 8K selector 路径接近或慢于 dense，32K 后
+完整前反向开始加速；动态稀疏的主要优化空间已从 selected attention 转移到 compression、
+top-k 和 index 生成。
 
 64K forward+backward 的算子额外峰值为：dense 8352 MiB、selected 3104 MiB、selector
 完整路径 7234 MiB。selected kernel 的 activation/gradient 峰值降低 2.69×；compression
@@ -892,10 +902,11 @@ block selector 减少实际配对。
 2. **KDA 的约束 DPLR 结构同时提高表达力和 kernel 效率。** 长度 8K–64K 时，KDA
    forward 约快 2.2×，forward+backward 约快 1.9×；MQAR 上又从 GDN 的随机水平提高到
    99.88%。
-3. **NSA selected kernel 在长序列上具有明显扩展优势。** 64K 的 selected forward 和
-   forward+backward 分别快 9.27× 与 6.91×，并显著降低 activation/gradient 峰值。
-4. **Selector 是动态 sparse 的主要组成部分。** 64K 加入 compression/top-k 后，NSA 的
-   forward speedup 从 9.27× 变为 3.24×；完整路径的速度仍随序列增长而扩大。
+3. **NSA selected kernel 在长序列上具有明显扩展优势。** 两次 64K 运行中，selected
+   forward 快 9.27×--13.94×，forward+backward 快 6.91×--8.12×，并显著降低
+   activation/gradient 峰值。
+4. **Selector 是动态 sparse 的主要组成部分。** 64K 加入 compression/top-k 后，完整路径
+   forward speedup 为 3.24×--5.46×，仍随序列增长而扩大。
 
 这些结果也说明 theoretical FLOPs、稀疏率和 wall-clock 各自回答不同问题。GPU 上的最终
 速度由矩阵形状、tile、片上空间、索引、前反向算法和 batch 并行度共同决定。
