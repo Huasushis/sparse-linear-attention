@@ -1,6 +1,9 @@
 # Sparse 与 Linear Attention 调研及复现报告（草稿）
 
 > 从 P1 起逐节填写。没有证据的结论先写成问题，不要补成肯定句。
+>
+> 本文件保留学习过程中的原始记号与推导，未统一 state 转置约定。已校订、带引用和实测数据的
+> 提交版本见 [`final.md`](final.md)；正式引用公式和结论时以该文件为准。
 
 ## 1. 背景与研究问题
 
@@ -83,6 +86,77 @@ $$L_t(S) = \frac12 ||S k_t - v_t||^2$$
 对 $S$ 求梯度，得到 $\nabla L_t(S) = (S k_t - v_t)k_t^\top$，然后用学习率 $\beta_t$ 更新。
 
 ## 4. Linear attention：kernel 与实现
+
+### Chunk-wise 线性注意力/状态更新矩阵化总结
+
+核心思想：将长度为 $C$（如 $C=64$）的 Chunk 内逐 Token 串行计算，转换为 GPU 高效的矩阵乘法（GEMM）。
+
+---
+
+#### 1. 状态更新矩阵化 ($S_{\text{next}}$)
+
+* **优化目标**：替代 $C$ 次串行外积与状态更新。
+* **计算公式**：
+  $$S_{\text{next}} = S_{\text{in}} + V^\top K$$
+* **维度变化 (GEMM)**：
+  $$[d, C] \times [C, d] \to [d, d]$$
+
+---
+
+#### 2. Chunk 输出并行计算 ($O$)
+
+Chunk 内所有 Token 的输出 $O$ 由**历史状态投影**与**Chunk 内因果注意力**两部分叠加而成：
+
+$$O = \underbrace{Q S_{\text{in}}^\top}_{\text{历史状态（Inter-chunk）}} + \underbrace{\left( (Q K^\top) \odot M_C \right) V}_{\text{局部因果注意力（Intra-chunk）}}$$
+
+##### 计算拆解：
+1. **历史状态投影**：$C$ 个 Query 一次性作用于历史状态 $S_{\text{in}}$
+   * **GEMM 维度**：$[C, d] \times [d, d] \to [C, d]$
+2. **局部因果注意力**：
+   * **注意力得分矩阵**：$Q K^\top$（维度：$[C, d] \times [d, C] \to [C, C]$）
+   * **施加因果掩码**：$A_{\text{chunk}} = Q K^\top \odot M_C$
+   * **加权聚合 V**：$A_{\text{chunk}} V$（维度：$[C, C] \times [C, d] \to [C, d]$）
+
+### DeltaNet Chunk-wise 矩阵化与并行化总结
+
+核心难点：Delta Rule 中的更新项 $v_t - S_{t-1}k_t$ 强依赖前一时刻状态 $S_{t-1}$，无法直接并行。
+解决思路：利用 **WY 表示法（Generalized Householder）** 重参数化 Chunk 内递推，构造 $C \times C$ 的下三角矩阵 $T$ 解耦时序依赖，全面转化为 GEMM 矩阵计算。
+
+---
+
+#### 1. 解耦递推：构造伪键值矩阵 ($T, W, U$)
+
+针对大小为 $C$（如 $C=64$）的 Chunk，计算下三角求解矩阵 $T$ 及伪键值 (Pseudo Keys/Values)：
+
+$$T = \left( I + \text{tril}(\text{diag}(\beta) K K^\top, -1) \right)^{-1} \text{diag}(\beta) \quad \in \mathbb{R}^{C \times C}$$
+
+$$W = T K, \quad U = T V \quad (K, V, U, W \in \mathbb{R}^{C \times d})$$
+
+---
+
+#### 2. Delta Chunk 核心计算公式
+
+引入结合历史状态 $S_{\text{in}}$ 的修正 Value 矩阵 $G$：
+
+$$G = U - W S_{\text{in}}^\top \quad (\text{shape: } [C, d] - [C, d][d, d] \to [C, d])$$
+
+##### ① 状态更新方程 ($S_{\text{out}}$)
+$$S_{\text{out}} = S_{\text{in}} + G^\top K \quad (\text{shape: } [d, d] + [d, C][C, d] \to [d, d])$$
+
+##### ② Chunk 输出方程 ($O$)
+$$O = \underbrace{Q S_{\text{in}}^\top}_{\text{历史状态投影}} + \underbrace{\left( (Q K^\top) \odot M_C \right) G}_{\text{Chunk 内因果加权}}$$
+
+---
+
+#### 3. GEMM 算子分解汇总
+
+整套 ChunkWise 计算全部转化为 GPU 高效的 GEMM 乘法：
+
+1. `W @ S_in.T` $\to$ 生成修正项矩阵 $G$
+2. `G.T @ K` $\to$ 状态更新 $S_{\text{out}}$
+3. `Q @ S_in.T` $\to$ 计算历史状态输出
+4. `Q @ K.T` $\to$ 计算 Chunk 内 Attention 分数
+5. `(Q @ K.T * M_C) @ G` $\to$ 因果 Mask 后加权 $G$ 得到局部输出
 
 ## 5. Sparse attention：算法分类与原理
 

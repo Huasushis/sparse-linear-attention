@@ -27,8 +27,8 @@
 
 - [x] 完成第 7--9 章与 Lab 1，独立填写 dense attention TODO。
 - [x] 完成 Lab 4；分别测 prefill/decode，留下包含完整配置的 benchmark 表。
-- [ ] 完成 Lab 4B；用 profiler 证据解释一个观察。
-- [ ] 完成 Lab 5 的 Triton vector-add TODO 与 grader。
+- [x] 完成 Lab 4B；用 profiler 证据解释一个观察。
+- [x] 完成 Lab 5 的 Triton vector-add TODO 与 grader。
 
 ## P3：Linear attention 算法
 
