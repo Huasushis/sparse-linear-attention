@@ -439,7 +439,7 @@ def run_nsa(args: argparse.Namespace) -> list[dict[str, object]]:
     # heads per group, dk=192, dv=128, selected block size/count 64/16.
     kv_heads, heads_per_group = 4, 16
     q_heads = kv_heads * heads_per_group
-    key_dim, value_dim = 192, 128
+    key_dim, value_dim = args.nsa_key_dim, args.nsa_value_dim
     block_size, selected_blocks = 64, 16
     for length in (8192, 16384, 32768, 65536):
         shape = {
@@ -495,7 +495,7 @@ def run_nsa(args: argparse.Namespace) -> list[dict[str, object]]:
             for mode in args.modes:
                 rows.append(
                     benchmark_method(
-                        study="nsa_figure6_dimensions",
+                        study="nsa_figure6_fla_supported_dimensions",
                         method=method,
                         shape=shape,
                         mode=mode,
@@ -506,6 +506,8 @@ def run_nsa(args: argparse.Namespace) -> list[dict[str, object]]:
                             "selected_block_size": block_size,
                             "selected_block_count": selected_blocks,
                             "window_size_in_paper": 512,
+                            "paper_key_dim": 192,
+                            "paper_value_dim": 128,
                         },
                     )
                 )
@@ -534,6 +536,8 @@ def main() -> None:
     parser.add_argument("--modes", choices=("fwd", "fwdbwd"), nargs="+", default=("fwd", "fwdbwd"))
     parser.add_argument("--warmup-ms", type=int, default=25)
     parser.add_argument("--rep-ms", type=int, default=100)
+    parser.add_argument("--nsa-key-dim", type=int, default=128)
+    parser.add_argument("--nsa-value-dim", type=int, default=128)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not torch.cuda.is_available():
