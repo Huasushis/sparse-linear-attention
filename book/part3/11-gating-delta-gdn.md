@@ -125,8 +125,8 @@ $$
 Gated Linear Attention（GLA）把 gate 细化到 key channel：
 
 $$
-S_t=\operatorname{Diag}(\boldsymbol\alpha_t)S_{t-1}+k_tv_t^\top,
-\qquad \boldsymbol\alpha_t\in(0,1)^{D_k}.
+S_t=\operatorname{Diag}(\boldsymbol{\alpha}_t)S_{t-1}+k_tv_t^\top,
+\qquad \boldsymbol{\alpha}_t\in(0,1)^{D_k}.
 $$
 
 不同 key 特征维可以有不同记忆寿命。GLA 原论文还讨论了更一般的二维 gate，最终采用上述

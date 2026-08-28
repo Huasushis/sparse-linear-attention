@@ -80,8 +80,8 @@ $$
 KDA 把 `α_t I` 改为对角矩阵：
 
 $$
-\bar S_t=\operatorname{Diag}(\boldsymbol\alpha_t)S_{t-1},
-\qquad \boldsymbol\alpha_t\in(0,1)^{D_k},
+\bar S_t=\operatorname{Diag}(\boldsymbol{\alpha}_t)S_{t-1},
+\qquad \boldsymbol{\alpha}_t\in(0,1)^{D_k},
 $$
 
 $$
@@ -92,7 +92,7 @@ $$
 
 $$
 S_t=(I-\beta_tk_tk_t^\top)
-    \operatorname{Diag}(\boldsymbol\alpha_t)S_{t-1}
+    \operatorname{Diag}(\boldsymbol{\alpha}_t)S_{t-1}
     +\beta_tk_tv_t^\top.
 $$
 
@@ -104,7 +104,7 @@ $$
 若设置
 
 $$
-\boldsymbol\alpha_t=\alpha_t\mathbf 1,
+\boldsymbol{\alpha}_t=\alpha_t\mathbf 1,
 $$
 
 则 `Diag(α_t)=α_tI`，KDA recurrence **精确退化为** GDN recurrence（假设 q/k/v、
@@ -143,9 +143,9 @@ $$
 KDA 的 transition 是
 
 $$
-A_t=(I-\beta_tk_tk_t^\top)\operatorname{Diag}(\boldsymbol\alpha_t)
-   =\operatorname{Diag}(\boldsymbol\alpha_t)
-    -\beta_tk_t(k_t^\top\operatorname{Diag}(\boldsymbol\alpha_t)).
+A_t=(I-\beta_tk_tk_t^\top)\operatorname{Diag}(\boldsymbol{\alpha}_t)
+   =\operatorname{Diag}(\boldsymbol{\alpha}_t)
+    -\beta_tk_t(k_t^\top\operatorname{Diag}(\boldsymbol{\alpha}_t)).
 $$
 
 它确实是 diagonal-plus-rank-1，但 low-rank 两侧都被当前 key 与 gate 约束，而不是任意
