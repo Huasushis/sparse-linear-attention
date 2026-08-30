@@ -1,9 +1,7 @@
 # Sparse 与 Linear Attention 调研及复现报告
 
-> 报告版本：2026-08-28  
-> 研究重点：核心算法、chunkwise/tiled GPU kernel、训练与推理性能
-> 引用格式：正文中的 `[@key]` 对应
-> [`references/attention.bib`](https://github.com/Huasushis/sparse-linear-attention/blob/study/sparse-linear-attention/references/attention.bib)
+> 报告日期：2026-08-30
+> 调研重点：核心算法、chunkwise/tiled GPU kernel、训练与推理性能
 
 ## 摘要
 
@@ -23,13 +21,23 @@ MoBA、SpargeAttention 和 HiLS-Attention。复现使用 FLA 官方实现，在 
 
 ## 1. 背景与研究问题
 
-Transformer 的 attention 让每个 token 直接读取其他 token，因此比 RNN 更容易并行训练，
-也更擅长长距离信息交互。它的主要代价来自两两配对：长度为 $T$ 的序列会产生
-$T\times T$ 个 attention score。上下文从 4K 增长到 64K 时，token 数增加 16 倍，score
-数增加 256 倍。训练和 prefill 需要完成大量矩阵乘法，decode 则需要在每一步读取越来越长
-的 KV cache。
+Transformer 的注意力层负责从上下文中取回当前 token 所需的信息。每个位置先生成 query、
+key 和 value：query 表示当前位置希望查找的内容，key 表示各位置可供匹配的特征，value
+表示匹配后真正被聚合的信息。query 与 key 的内积给出位置之间的相关性，softmax 将相关性
+变为权重，最后对 value 加权求和。与按时间步传递隐藏状态的传统 RNN 相比，这种两两交互
+既便于训练时并行，也能直接建立远距离联系。
 
-现有方法主要沿三条路线发展：
+代价来自 query-key 的两两配对。对于长度为 $T$、head dimension 为 $D$ 的序列，标准
+attention 需要计算 $T\times T$ 个分数，主要计算量为 $O(T^2D)$。上下文从 4K 增长到
+64K 时，token 数只增加 16 倍，分数矩阵却增加 256 倍。这个代价在不同阶段表现不同：
+
+- 训练和 prefill 一次处理整段序列，主要压力是二次增长的矩阵乘、激活和临时存储；
+- autoregressive decode 每次只有一个新 query，单步计算量随已有上下文线性增长，同时还要
+  从显存读取不断扩大的 KV cache；
+- 长上下文 serving 还会受到请求调度、分页 KV cache 和并发 batch 的影响。
+
+因此，长上下文优化不能只看公式中的 FLOPs，还要同时处理算法复杂度、显存访问和 GPU
+执行效率。现有方法主要沿三条路线发展：
 
 | 路线 | 核心做法 | 保存的历史 | 代表方法 |
 | --- | --- | --- | --- |
@@ -37,8 +45,9 @@ $T\times T$ 个 attention score。上下文从 4K 增长到 64K 时，token 数�
 | Linear attention | 把历史 key-value 累积到固定形状的矩阵状态 | recurrent state | GLA、DeltaNet、GDN、KDA、Mamba-2/SSD |
 | Sparse attention | 为每个 query 计算局部窗口或动态选出的少量 KV block | 稀疏 KV 子集或完整 KV cache | MInference、NSA、MoBA、Sparge、HiLS |
 
-这三条路线分别优化了数据流、历史表示和配对数量。它们可以组合：例如 sparse kernel 仍然
-使用 FlashAttention 的 online softmax，Kimi Linear 则把三层 KDA 与一层全局 MLA 交错。
+这三条路线分别改变数据流、历史表示和实际配对数量。它们并不互斥：sparse kernel 仍可使用
+FlashAttention 的 online softmax；Kimi Linear 则把三层 KDA 与一层全局 MLA 交错，在固定
+状态与完整注意力之间折中。
 
 本报告围绕四个问题展开：
 
@@ -47,9 +56,11 @@ $T\times T$ 个 attention score。上下文从 4K 增长到 64K 时，token 数�
 3. chunk、tile、WY 表示和 online softmax 如何映射到 GPU；
 4. 算法复杂度、kernel 时间、训练效果和 serving 指标之间是什么关系。
 
-评价一个新方法时需要同时看“学得怎样”和“跑得怎样”。固定训练 token 比较相同数据预算
-下的效果，固定 FLOPs 比较相同理论计算预算，固定 GPU 时间比较相同实际成本；validation
-loss、下游准确率、time-to-quality、吞吐、峰值显存、TTFT 和 TPOT 共同构成完整结果。
+评价一个方法需要把模型效果和系统性能分开测量。模型效果包括 validation loss、下游任务
+准确率和长上下文能力；训练性能包括每秒 token 数、达到相同 loss 所需时间和峰值显存；
+推理性能则包括 prefill latency、首 token 延迟（TTFT）、单 token 延迟（TPOT）、吞吐和
+KV cache 占用。只有明确训练 token、FLOPs、硬件时间和模型规模中哪一项保持相同，两个
+结果才具有可解释的比较基础。
 
 ## 2. Dense attention 与性能基线
 
@@ -75,7 +86,7 @@ $$
 FlashAttention 计算完整的 dense softmax attention。朴素路径将 $S$、$P$ 写入 HBM；
 FlashAttention 将 $Q$ 切为行 tile，将 $K/V$ 切为列 tile，让临时 score 在片上产生、
 消费后丢弃，只维护每个 query 行的 running maximum、normalizer 和未归一化输出
-[@dao2022flashattention]。
+[71]。
 
 对新 score block $s_b$，online softmax 维护
 
@@ -99,8 +110,8 @@ $$
 score/probability，再累积 $dQ,dK,dV$；这增加部分 FLOPs，却减少 activation 与 HBM 流量。
 
 FlashAttention-2 进一步减少非 matmul FLOPs、增加 sequence 维并行并改进 warp 间工作
-划分 [@dao2024flashattention2]。FA-3/4 利用 Hopper/Blackwell 的异步 pipeline 与低精度
-继续提高新架构上的吞吐 [@shah2024flashattention3; @zadouri2026flashattention4]。
+划分 [72]。FA-3/4 利用 Hopper/Blackwell 的异步 pipeline 与低精度
+继续提高新架构上的吞吐 [73, 74]。
 
 ### 2.3 Dense kernel 的 tile 生命周期
 
@@ -179,9 +190,9 @@ $\phi(x)=\operatorname{ELU}(x)+1$、ReLU、SiLU 等正特征，再配合新的�
 近似 attention map 能表达多少独立的匹配模式。
 
 当 $D_\phi,D_v$ 固定时，关于序列长度的工作为 $O(TD_\phi D_v)$，decode state 不随
-$T$ 增长。这是“Transformers are RNNs”的基本形式 [@katharopoulos2020transformers]。
-Performer 用随机正特征近似 softmax kernel [@choromanski2021rethinking]；cosFormer 等
-直接采用新的特征或归一化 [@hua2022transformer]。有限维 state 将全部历史压缩到固定
+$T$ 增长。这是“Transformers are RNNs”的基本形式 [1]。
+Performer 用随机正特征近似 softmax kernel [2]；cosFormer 等
+直接采用新的特征或归一化 [4]。有限维 state 将全部历史压缩到固定
 容量，其表达能力取决于特征维度、更新规则和遗忘机制。
 
 ### 3.2 Recurrent、parallel 与 chunkwise 三种计算形式
@@ -208,7 +219,7 @@ $$
 
 串行边界从每 token 一次降为每 chunk 一次；块内使用 $C\times D$ 与 $D\times C$ GEMM。
 GLA 论文指出 $C$ 取 Tensor Core 友好的倍数（如 16 的倍数）有利于利用矩阵乘，并通过
-tiling 在片上复用张量块，减少 HBM 往返 [@yang2024gated]。FLA 固定提交中 GDN 支持
+tiling 在片上复用张量块，减少 HBM 往返 [6]。在实验所用的 FLA 版本中，GDN 支持
 chunk size 16/32/64，KDA 支持 32/64，默认均为 64。
 
 ### 3.3 GLA：主动遗忘
@@ -222,7 +233,7 @@ $$
 
 不同通道可以有不同记忆寿命。它仍是 additive write：相同 key 的新旧 value 可能叠加。
 GLA 的研究贡献同时包括模型机制与 I/O-aware chunkwise training，二者需要模型消融和
-operator benchmark 两套证据 [@yang2024gated]。
+operator benchmark 两套证据 [6]。
 
 ### 3.4 Delta rule：沿当前 key 方向擦除再写入
 
@@ -254,7 +265,7 @@ $$
 $I-\beta kk^\top$ 是 rank-1 修正的 generalized Householder transition；kernel 直接使用
 $k$ 与 $\beta$ 完成这次修正。DeltaNet 使用 compact WY 表示压缩一串 rank-1
 transition，使 chunk 内 pseudo-key/pseudo-value 与边界 state 的计算转为 GEMM，并避免为
-每个 token materialize 矩阵 state [@yang2024delta]。
+每个 token materialize 矩阵 state [7]。
 
 ### 3.5 GDN：gate 与 delta 的组合
 
@@ -270,14 +281,14 @@ $$
 
 $\alpha$ 决定旧状态寿命，$\beta$ 决定当前 key 方向的纠正幅度。论文在合成 recall、语言
 模型和 LongBench 中验证了这种组合，并在单张 H100 上报告了与 DeltaNet 接近的训练吞吐
-[@yang2025gated]。
+[10]。
 
 ### 3.6 Mamba-2 / SSD：state-space 与 attention 的块对偶
 
 SSD 将一类 scalar-identity state transition 的 SSM 写成结构化半可分（semiseparable）
 矩阵，也可以反向把 attention 看作结构化矩阵乘。其工程意义是：同一 operator 可在
 recurrent state、卷积/scan、block matrix 三种视角中选择执行计划；结构化 transition
-带来了块算法与 Tensor Core 友好性 [@dao2024transformers]。SSD/Mamba-2、GDN 和 KDA
+带来了块算法与 Tensor Core 友好性 [8]。SSD/Mamba-2、GDN 和 KDA
 都维护固定矩阵 state，并分别使用 scalar transition、gated delta 和 channel-wise delta 更新。
 
 ### 3.7 KDA 与 Kimi Linear：GDN 的细粒度扩展
@@ -301,20 +312,20 @@ A_t=\operatorname{Diag}(\boldsymbol\alpha_t)(I-\beta_tk_tk_t^\top)
 $$
 
 这是受约束的 diagonal-plus-rank-1（DPLR）结构。当
-$\boldsymbol\alpha_t=\alpha_t\mathbf1$ 时，KDA 精确退化为 GDN；本报告用 FLA 的 naive/
-fused recurrent kernel 验证该 scalarization test。KDA 绑定低秩两侧的变量结构，论文称其
-特化 chunkwise 算法比一般 DPLR 少做第二级 chunk 矩阵计算与若干 GEMM [@kimi2025linear]。
+$\boldsymbol\alpha_t=\alpha_t\mathbf1$ 时，KDA 精确退化为 GDN。KDA 绑定低秩两侧的
+变量结构，论文称其
+特化 chunkwise 算法比一般 DPLR 少做第二级 chunk 矩阵计算与若干 GEMM [11]。
 
 Kimi Linear 在 KDA 之上构建完整模型：以 3:1 交错 KDA 与全局 MLA，并加入 MoE
 backbone、位置处理和训练配方。三层 KDA 使用固定 state，一层 MLA 维护 KV cache，因此
-这组层比例最多减少约 75% 的 attention KV cache [@kimi2025linear]。
+这组层比例最多减少约 75% 的 attention KV cache [11]。
 
 ## 4. Linear attention：kernel 与实现
 
 ### 4.1 普通线性注意力的 chunkwise 矩阵化
 
-核心思想是把长度为 $C$（通常为 64）的 chunk 内逐 token 更新改写为矩阵乘法。为了和
-你的草稿保持一致，本节使用 $S\in\mathbb R^{D_v\times D_k}$ 的 state 方向：
+核心思想是把长度为 $C$（通常为 64）的 chunk 内逐 token 更新改写为矩阵乘法。以下统一
+采用 $S\in\mathbb R^{D_v\times D_k}$ 的 state 方向：
 
 $$
 S_t=S_{t-1}+v_tk_t^\top,\qquad o_t=q_tS_t^\top.
@@ -360,7 +371,7 @@ $$
 chunk 之间仍按顺序传递 $S_{\text{in}}$，串行步数从 $T$ 次减少为 $T/C$ 次；chunk 内
 的主要工作都变成 Tensor Core 擅长的 GEMM。$C=1$ 时回到 recurrent，$C=T$ 时接近完全
 parallel，常用的 $C=64$ 在并行度、片上空间和 $C^2$ 局部矩阵之间取得平衡
-[@hua2022transformer; @yang2024gated]。
+[4, 6]。
 
 ### 4.2 Delta Rule 为什么需要 WY 表示
 
@@ -379,7 +390,7 @@ $$
 
 依赖 $S_{t-1}$，所以直接计算 $u_1,u_2,\ldots,u_C$ 仍然是串行的。DeltaNet 将连续的
 $I-\beta_tk_tk_t^\top$ 看作 generalized Householder transformation，并用 compact WY
-表示把一串 rank-1 transition 压缩为两个瘦矩阵 [@yang2024delta]。
+表示把一串 rank-1 transition 压缩为两个瘦矩阵 [7]。
 
 ### 4.3 DeltaNet Chunk-wise 计算公式
 
@@ -420,7 +431,7 @@ O=
 \underbrace{\left((QK^\top)\odot M_C\right)G}_{\text{当前 chunk 的 delta 修正}}.
 $$
 
-这正是草稿中五个核心 GEMM 的来源：
+由此可以得到五个核心 GEMM：
 
 1. `W @ S_in.T` 生成 $G$ 中的历史修正项；
 2. `G.T @ K` 更新 $S_{\text{out}}$；
@@ -446,7 +457,7 @@ KDA 将 scalar decay 扩展为每个 key channel 一个 decay，因此 transitio
 diagonal-plus-rank-1。通道 gate 能更细地控制 state 的行，但也会增加 chunk 内辅助矩阵。
 KDA 把 rank-1 两侧向量绑定到同一个 $k_t$，专用算法比一般 DPLR 少两次二级 chunk 矩阵
 计算和三次额外矩阵乘；这也是 Kimi Linear Figure 2 比较 KDA 与 DPLR kernel 的原因
-[@kimi2025linear]。
+[11]。
 
 ### 4.5 Chunk、tile 与 GPU kernel
 
@@ -485,10 +496,10 @@ kernel 会让 $Q/K/V$ tile 在 SRAM 和寄存器中复用，state 累加通常�
 
 FLA 中 `chunk.py` 负责接口和调度，`chunk_fwd.py`/`chunk_bwd.py` 负责主路径，
 `wy_fast.py`、`gate.py` 和 `chunk_intra.py` 生成辅助量；`fused_recurrent.py` 将一个或少量
-token 的递推融合为 decode kernel。FLA 当前 GDN 支持 chunk size 16/32/64，KDA 支持
+token 的递推融合为 decode kernel。该 FLA 版本的 GDN 支持 chunk size 16/32/64，KDA 支持
 32/64，默认使用 64。
 
-### 4.6 本次复现使用的算子
+### 4.6 实验所用算子
 
 | 算子 | 输入布局 | 核心状态或索引 | 用途 |
 | --- | --- | --- | --- |
@@ -527,13 +538,13 @@ softmax reduction、kernel launch 与同步。block sparse 将相邻 token 一�
 | training-free 近似 | SparQ、QUEST、Loki、SpargeAttention | proxy、量化、低秩 key、在线过滤 | proxy recall 与 selector 带宽 |
 | KV/cache policy | StreamingLLM、H2O、DuoAttention、InfiniGen | sink/heavy hitter/head 分类/eviction | decode 质量、cache page 与调度 |
 
-完整 74 篇分类见附录 A 和 `study/PAPER_MAP.md`。
+全部 74 篇文献按研究方向列于第 9.4 节，并在文末给出完整出处。
 
 ### 5.3 MInference：按 head 选择预填充稀疏模式
 
 MInference 针对长上下文 **prefill**，离线为 attention head 分配 A-shape、Vertical-Slash
 或 Block-Sparse 模式，运行时按输入建立具体 index，再调用相应 Triton/FlashAttention 风格
-kernel [@jiang2024minference]：
+kernel [41]：
 
 - A-shape：初始 token + local window，结构较稳定；
 - Vertical-Slash：少量动态垂直列与斜线；
@@ -545,7 +556,7 @@ Vertical-Slash 可用少量尾部 query 与 K 的乘积估计重要列/斜线；
 
 ### 5.4 NSA：compression、selection、sliding 三分支
 
-NSA 是 natively trainable、hardware-aligned sparse architecture [@yuan2025native]：
+NSA 是 natively trainable、hardware-aligned sparse architecture [52]：
 
 1. **Compression：** 将连续 K/V block 聚合成 coarse token，保留全局概览；
 2. **Selection：** 复用 compression attention score 估计 block importance，选择少量原始
@@ -553,19 +564,16 @@ NSA 是 natively trainable、hardware-aligned sparse architecture [@yuan2025nati
 3. **Sliding window：** 单独保留近期局部 token，避免其他分支被局部模式“走捷径”；
 4. **Gated merge：** 三分支输出由学习 gate 聚合，并可使用独立 K/V 投影降低梯度干扰。
 
-FLA 的 NSA selected kernel 使用 `[B,TQ,H,S]` block indices；当前固定提交默认 block size
+FLA 的 NSA selected kernel 使用 `[B,TQ,H,S]` block indices；实验所用版本的 block size
 64，论文常用每 query 16 个 selected blocks。kernel 以 `BK/BV` power-of-two tile 覆盖
 head dimension，Q tile 留在片上，遍历 selected K/V blocks 并做 sparse online softmax。
 Backward 将 query-to-block 选择倒排成 CSR，让 dK/dV kernel 以被选择 block 为单位 gather
 query，避免扫描所有 query。
 
-复现分别测量预先给定 block indices 的 selected kernel，以及 compression/top-k + selected
-完整路径，由两组时间之差观察 selector 和 compression 的增量开销。
-
 ### 5.5 MoBA：block router + 两路 FlashAttention
 
 MoBA 把序列切成固定 block，以 block mean key 作为 router representative；每个 query/head
-选择 top-k block，其中 local block 始终保留 [@lu2025moba]。当前 FLA 实现的流程是：
+选择 top-k block，其中 local block 始终保留 [54]。FLA 实现的流程是：
 
 ```text
 block mean K -> query-to-block score -> causal top-k-1 nonlocal blocks
@@ -581,7 +589,7 @@ local causal FlashAttention          gathered varlen FlashAttention
 
 ### 5.6 SpargeAttention：两阶段在线过滤
 
-SpargeAttention 是 training-free sparse/quantized inference kernel [@zhang2025spargeattention]：
+SpargeAttention 是 training-free sparse/quantized inference kernel [59]：
 
 1. 将每个 Q/K block 压缩成 representative，按 block 内 token 相似度决定是否相信压缩；
 2. 以 coarse score 的 softmax CDF 生成 block mask，跳过对应 $Q_iK_j^\top$ 与 $P_{ij}V_j$；
@@ -595,10 +603,10 @@ SpargeAttention 是 training-free sparse/quantized inference kernel [@zhang2025s
 ### 5.7 HiLS-Attention：分层 chunk mass 与 query packing
 
 HiLS 是 2026 年的新工作，使用层级 chunk summary/质量分配选择远程内容，并将相邻 query
-的 selected chunk 并集打包，使一次 K/V load 服务多个 query [@hu2026hils]。这种
+的 selected chunk 并集打包，使一次 K/V load 服务多个 query [58]。这种
 one-load-multiple-compute 可以增加 Tensor Core 左矩阵规模与 K/V 复用；query 并集同时会
-扩大实际加载的 block 数。评价该设计时应一起记录目标 top-k、并集后的 block 数、selector、
-attention kernel 和端到端 latency。
+扩大实际加载的 block 数。因此它的实际性能由目标 top-k、合并后的 block 数、selector
+开销、attention kernel 和端到端 latency 共同决定。
 
 ### 5.8 Sparse tile 数据流
 
@@ -650,73 +658,74 @@ KV block 的 query。这个倒排步骤换来了连续的 dK/dV 写入和更规�
 prefill 有足够多的 query，可以用大 tile 和 block-sparse GEMM；decode 的 $T_q=1$，算术强度
 较低，时间更接近实际读取的 KV 字节数。因此同一个稀疏模式需要分别报告 prefill 与 decode。
 
-StreamingLLM 保留 attention sink 与 recent window [@xiao2024streamingllm]；H2O 保留
-heavy hitters [@zhang2023h2o]；QUEST/SparQ/Loki 用 query-aware proxy 或低秩 key 缩小 KV
-读取 [@tang2024quest; @ribar2024sparq; @singhania2024loki]。MInference 主要优化 prefill，
-LServe 进一步统一 sparse prefill/decode [@yang2025lserve]。
+StreamingLLM 保留 attention sink 与 recent window [39]；H2O 保留
+heavy hitters [40]；QUEST/SparQ/Loki 用 query-aware proxy 或低秩 key 缩小 KV
+读取 [42–44]。MInference 主要优化 prefill，LServe 进一步统一 sparse prefill/decode [38]。
 
 ### 6.3 KV cache、page table 与调度
 
 serving engine 会把不同请求的 KV cache 切成 page，并在每一步把活跃请求组成 batch。
 sparse attention 的 block index 最终需要映射到物理 page；连续逻辑 block 可能落在不同物理
 地址。FlashInfer 将 paged/composable KV layout、JIT attention template、load-balanced
-scheduling 与 CUDA Graph 约束放进统一接口 [@ye2025flashinfer]。因此端到端吞吐还取决于
+scheduling 与 CUDA Graph 约束放进统一接口 [36]。因此端到端吞吐还取决于
 batch 大小、请求长度分布、page 命中、通信和其他模型层。
 
 Linear recurrent decode 用固定 $D_k\times D_v$ state 代替随 $T$ 增长的 KV cache。
 ReplaySSM 进一步保存一个较少写回的 state checkpoint 和近期输入 ring buffer，先直接重组
 output，buffer 满时再把更新 flush 到 state。它优化的是 state 写回频率和 speculative decode
-执行顺序，适合放在 linear attention serving 的后续工程研究中。
+执行顺序，适合 linear attention serving [75]。
 
-### 6.4 计时与 profiling 工具
+### 6.4 性能测量与瓶颈定位
 
-一次可靠的性能分析通常按下列顺序进行：
+GPU kernel 由 CPU 异步提交，CPU 端函数返回并不代表 GPU 已经完成计算。因而本实验采用
+CUDA Event 与 `triton.testing.do_bench` 在 GPU 时间线上计时，并在正式测量前完成 Triton
+编译、autotune 和缓存预热。每个配置记录第 20、50、80 百分位（p20/p50/p80）；正文使用
+p50，即中位数，表示稳态延迟。
+峰值显存由 `torch.cuda.max_memory_allocated` 记录，输入张量在测量前已经常驻显存，因此
+结果表示算子输出、激活、临时量和梯度带来的额外分配。
 
-| 工具 | 回答的问题 | 本报告中的用法 |
-| --- | --- | --- |
-| CUDA Event / `triton.testing.do_bench` | 稳态 kernel wall time 是多少 | 预热/autotune 后记录 p20、p50、p80 |
-| `torch.cuda.max_memory_allocated` | PyTorch allocator 的峰值是多少 | 分开记录输入常驻显存与算子额外峰值 |
-| PyTorch Profiler | 调用了哪些 CPU op/CUDA kernel，各占多少时间 | 查看 kernel 数、shape、memory 和 trace |
-| Nsight Systems (`nsys`) | CPU launch、GPU 执行、memcpy、通信是否重叠 | 分析时间线与 launch gap |
-| Nsight Compute (`ncu`) | 单个 kernel 的 occupancy、带宽、Tensor Core、stall 原因 | 对代表性 kernel 收集硬件 counter |
-
-CUDA kernel 是异步提交的，所以普通 `time.time()` 需要在计时边界调用
-`torch.cuda.synchronize()`；CUDA Event 和 `do_bench` 会在 GPU 时间线上测量。第一次调用
-通常包含 Triton 编译和 autotune，正式数字来自预热后的多次重复。Profiler 会插桩并改变
-绝对时间，因此它用于解释 kernel 构成；稳态 p50 由独立的未插桩 benchmark 给出。
-
-读 profiler 时先看五项：kernel 次数、self CUDA time、memcpy、allocation、CPU 与 GPU
-时间线之间的空洞。随后只改变一个变量，例如把 $T$ 从 8K 增到 16K，观察 kernel 数、每个
-kernel 时间和总时间怎样变化。`ncu` 的 DRAM throughput、achieved occupancy、Tensor Core
-指令和 stall breakdown 才能进一步区分 memory-bound、compute-bound 和 occupancy-bound。
+延迟只能说明“慢了多少”，profiler 用于解释“时间花在哪里”。PyTorch Profiler 记录一次
+前向和反向中的 kernel 名称、调用次数与 self device time，由此可以判断时间集中在状态传播、
+矩阵乘、索引准备还是梯度聚合。Nsight Systems 适合检查 CPU launch gap、memcpy、通信与
+GPU 执行是否重叠；Nsight Compute 则进一步提供 DRAM 吞吐、Tensor Core 指令、occupancy
+和 warp stall 等硬件计数器，可用于区分访存受限、计算受限和并行度不足。本报告的绝对延迟
+来自未插桩 benchmark，PyTorch Profiler 数据只用于分析各 kernel 的时间构成。
 
 ## 7. 复现方法与环境
 
 ### 7.1 环境与版本
 
-| 项目 | 记录 |
-| --- | --- |
-| 教程仓库 | `study/sparse-linear-attention`；paper driver 从 `97f750d` 引入，NSA rerun 为 `59110bb` |
-| FLA 仓库 | `~/sparse_linear/flash-linear-attention` |
-| FLA commit | `d1ce07369d581813553f30a750af3b6b5f9af6a9` |
-| 核心作业 | operator `46740`；MQAR `46741`；NSA `46839` 与 64K confirm `46856`；profiler `46745/46842` |
-| GPU | NVIDIA A100-SXM4-80GB（81151.75 MiB） |
-| 软件 | Python 3.12.13；PyTorch 2.11.0+cu128；CUDA runtime 12.8；Triton 3.6.0 |
-| Python 环境 | `~/sparse_linear/.envs/sla-tutorial-py312` |
-| 原始产物 | 107：`artifacts/paper-46740/`、`artifacts/sla-kda-correct-46848.out`、`artifacts/mqar-46741/`、`artifacts/nsa-46839/`、`artifacts/nsa-confirm-46856.json`、`artifacts/profile-*` |
-| 可提交记录 | [`work/runs/paper-reproduction-2026-08-28.md`](https://github.com/Huasushis/sparse-linear-attention/blob/study/sparse-linear-attention/work/runs/paper-reproduction-2026-08-28.md) |
+实验在 Slurm 集群的单张 A100 上完成。算子实现来自 Flash Linear Attention（FLA），固定
+版本可以保证算法接口、Triton kernel 和 autotune 配置保持一致。
 
-作业启动日志记录计算节点环境。`46740` 运行期间仓库 HEAD 随后同步到 `562fbbf`，而
-Delta/Kimi benchmark 文件在 `97f750d..562fbbf` 间的 Git blob 相同；本报告以作业提交时的
-`97f750d` 作为这两组数据的代码版本。NSA rerun 使用独立作业和固定提交 `59110bb`。
+| 项目 | 配置 |
+| --- | --- |
+| GPU | NVIDIA A100-SXM4-80GB（可用显存 81151.75 MiB） |
+| FLA commit | `d1ce07369d581813553f30a750af3b6b5f9af6a9` |
+| 软件 | Python 3.12.13；PyTorch 2.11.0+cu128；CUDA 12.8；Triton 3.6.0 |
+| 算子精度 | Q/K/V 与主要输出为 BF16；gate 累计和数值敏感的辅助量为 FP32 |
 
 ### 7.2 计时、显存与输入规则
 
-所有 operator 输入使用 BF16，gate 的累计与需要稳定范围的辅助量使用 FP32。每个 shape
-先触发 Triton 编译/autotune，然后使用 `triton.testing.do_bench` 计时；warmup 窗口 25 ms、
-repeat 窗口 100 ms，保存 p20/p50/p80。forward+backward 每次重新执行 forward，再用
-`torch.autograd.grad` 计算所有输入梯度。显存记录为“已经创建输入以后，算子增加的 PyTorch
-allocator peak”，因此表中的额外显存包含 output、activation、临时量与梯度。
+每个 shape 先完成编译和 autotune，再以 25 ms warmup、100 ms repeat 测量 p20、p50、
+p80。64K NSA 另外使用 1000 ms warmup 和 6500 ms repeat 复测。`forward+backward` 每次
+重新执行 forward，并对所有浮点输入计算梯度。显存结果是在输入已经创建以后记录的
+PyTorch allocator 额外峰值。
+
+本文统一定义
+
+$$
+\text{speedup}=\frac{\text{基线方法的 p50 延迟}}
+                       {\text{被比较方法的 p50 延迟}}.
+$$
+
+因此 speedup 大于 1 表示被比较方法更快。三组性能实验的基线分别为：
+
+| 实验 | 被比较方法 | 基线方法 |
+| --- | --- | --- |
+| DeltaNet | `chunk_delta_rule` | 数学等价的 `fused_recurrent_delta_rule` |
+| Kimi Linear | 专用 `chunk_kda` | 一般 DPLR transition 的 `chunk_dplr_delta_rule` |
+| NSA | block-sparse selected 与 compression+selection 路径 | 相同 B/T/head/dtype 的 PyTorch Flash SDPA dense GQA |
 
 四组主要配置为：
 
@@ -727,48 +736,50 @@ allocator peak”，因此表中的额外显存包含 output、activation、临�
 | NSA | `B=1,Hq/Hkv=64/4,Dk=Dv=128`；block size 64；16 blocks；$T=8K\ldots64K$ | NSA Figure 6 的 GQA/head/block 配置 |
 | MQAR | 2 layers、2 heads、head dim 128；$T=512$；128 pairs、64 queries；8000 steps | Kimi Linear Section 5.1 |
 
-NSA 论文效率实验使用 $D_k=192,D_v=128$。在 A100 上，FLA 当前实现将 `BK` 上限设为
-128，因此 $D_k=192$ 会产生两个 key tiles，而该 kernel 的保护条件要求 `NK==1`；PyTorch
-Flash SDPA 同时要求 Q/K/V 最后一维相同。第一轮完整保留了这些 backend 报错，第二轮将
-$D_k/D_v$ 统一为 FLA 官方支持的 128，其余论文配置保持不变。
+NSA 论文的效率实验使用 $D_k=192,D_v=128$。FLA 的 A100 kernel 将单个 key tile 上限设为
+128，并要求 key dimension 只占一个 tile；PyTorch Flash SDPA 还要求 Q/K/V 的最后一维
+相同。为使 sparse 与 dense 基线能够在同一后端运行，实验将 $D_k$ 和 $D_v$ 统一为 128，
+保留论文中的 GQA 比例、block size、selected block 数和序列长度。
 
 ### 7.3 MQAR 训练设置
 
-GDN 和 KDA 使用同一批程序生成的数据、相同模型种子、AdamW、learning rate `5e-4`、
-batch size 16 和 BF16 autocast。每条长度 512 的序列包含 128 组随机 key-value、64 个查询
-和填充噪声；loss 只计算 query 后面的答案 token。验证集由固定随机种子生成。GDN 为
-2,385,672 参数，KDA 为 2,516,740 参数，KDA 多出的约 5.5% 参数来自 channel-wise gate
-投影。
+MQAR（Multi-Query Associative Recall）要求模型从序列前部记住多组 key-value，并在后部
+看到 key 时输出对应 value，用于测量状态模型的关联记忆能力。GDN 和 KDA 使用相同数据、
+随机种子、AdamW、learning rate `5e-4`、batch size 16 和 BF16 autocast。每条长度 512 的
+序列包含 128 组 key-value、64 个查询和填充噪声，loss 只计算查询后的答案 token。GDN
+含 2,385,672 个参数，KDA 含 2,516,740 个参数；KDA 多出的约 5.5% 参数来自 channel-wise
+gate 投影。
 
 ## 8. 正确性、性能与效果结果
 
-原始 JSON、pytest 输出和 profiler trace 保存在上述 107 artifact 目录；Git 中保存小型摘要、
-图和生成脚本。
+性能比较的前提是矩阵化、分块和 fused kernel 没有改变算子的数学结果。本实验将优化
+kernel 与逐 token 或朴素并行参考实现输入相同的随机张量，比较输出、最终 state 以及所有
+可训练输入的梯度。最大绝对误差反映单个元素的最坏偏差；归一化误差定义为误差的 RMSE
+除以参考张量的 RMS，用于消除不同张量尺度的影响。
 
-### 8.1 FLA 官方前向与反向正确性
+### 8.1 数值正确性：优化 kernel 与参考实现的一致性
 
-FLA 官方测试以 naive/reference 实现为基准，同时检查 output、final state 和各输入梯度。
+| 算子 | 覆盖范围 | 输出最大绝对误差 | 输出/梯度最大归一化误差 |
+| --- | --- | ---: | ---: |
+| GDN chunk | FP32；chunk 16/32/64；output、state 与全部梯度 | $9\times10^{-6}$ | $2.4\times10^{-5}$ |
+| KDA chunk | FP16/BF16；chunk 32/64；GVA、L2 norm、gate、output、state 与全部梯度 | $1.465\times10^{-3}$ | $6.677\times10^{-3}$ |
+| DPLR chunk | FP16；$D=60/64/100/128$；safe gate、recompute、output、state 与全部梯度 | $6.282\times10^{-2}$ | $9.32\times10^{-4}$ |
+| NSA selected | BF16；$D=60/64/100/128$；GQA；output 与 $dQ/dK/dV$ | $1.953\times10^{-3}$ | $7.82\times10^{-4}$ |
 
-| 算子 | 覆盖内容 | 结果 |
-| --- | --- | ---: |
-| GDN chunk | chunk 16/32/64；`o, ht, dq, dk, dv, dbeta, dg, dh0` | 3 passed |
-| KDA chunk | FP16/BF16、channel gate、GVA、chunk 32/64；`o, ht` 与全部输入梯度 | 16 passed |
-| DPLR chunk | 多个 B/T/H/D、safe gate、recompute；全部输入梯度 | 11 passed |
-| NSA selected | D=60/64/100/128、GQA、block 32；`o,dq,dk,dv` | 6 passed |
+GDN 的 FP32 结果几乎与参考递推重合。KDA 的测试覆盖 FP16/BF16，NSA 使用 BF16，绝对
+误差会受低精度量化步长影响，但相对于参考张量尺度的误差均低于 0.7%。DPLR 的部分 FP16
+梯度最大绝对差较大，
+其最大归一化误差仍低于 $10^{-3}$。这些结果说明后续性能差异来自执行方式，而不是算子
+定义发生了变化。
 
-例如 NSA `B=3,T=1024,Hkv=2,Hq=32,D=128` 的 BF16 测试中，output 最大绝对差
-`0.001953`，`dK/dV` 最大绝对差 `0.007812`。KDA 最后一组
-`B=2,T=1024,H/HV=2/8,D=128,BF16` 同时覆盖 GVA、L2 norm 和 kernel 内 gate，output
-最大绝对差 `0.001465`，所有输入梯度按官方误差规则通过。这些 correctness gate 通过后
-才执行长序列计时。
-
-### 8.2 DeltaNet：复现 recurrent/chunkwise speedup
+### 8.2 DeltaNet：chunkwise 相对 recurrent 的加速
 
 DeltaNet 论文 Figure 1 固定模型维度 2048，并让 $B\times T=16384$。这样每个点的 token
-总数一致：序列越长，batch 越小。下面给出 head dim 128 的绝对 p50；head 数为
-$2048/128=16$。
+总数一致：序列越长，batch 越小。被比较对象是 `chunk_delta_rule`，基线是计算同一 Delta
+Rule 的 `fused_recurrent_delta_rule`；表中 speedup 等于 recurrent 延迟除以 chunkwise
+延迟。下面给出 head dim 128 的 p50，head 数为 $2048/128=16$。
 
-| T / B | recurrent fwd (ms) | chunk fwd (ms) | fwd speedup | recurrent fwd+bwd (ms) | chunk fwd+bwd (ms) | fwd+bwd speedup |
+| T / B | recurrent fwd (ms) | chunk fwd (ms) | recurrent/chunk | recurrent fwd+bwd (ms) | chunk fwd+bwd (ms) | recurrent/chunk |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 512 / 32 | 4.924 | 1.259 | 3.91× | 31.200 | 3.469 | 8.99× |
 | 1K / 16 | 5.303 | 1.273 | 4.17× | 33.771 | 3.488 | 9.68× |
@@ -781,16 +792,19 @@ $2048/128=16$。
 
 head dim 64/128/256 都呈现相同趋势。固定 token 数后，chunkwise 的大 GEMM 工作量接近
 恒定；recurrent 路径随着 $T$ 增大而失去 batch 并行度，串行循环也更长。因此 head dim
-128 的 forward speedup 从 3.91× 增长到 16.47×，forward+backward 从 8.99× 增长到
-40.18×。head dim 256 的 16K forward+backward speedup 达到 47.28×。这复现了论文中
+128 的 chunkwise forward 相对 recurrent 从快 3.91× 增长到快 16.47×，前向加反向从
+快 8.99× 增长到快 40.18×。head dim 256 的 16K forward+backward 相对 recurrent 快
+47.28×。这复现了论文中
 “序列越长、head dimension 越大，chunkwise 优势越明显”的主要曲线形状
-[@yang2024delta]。
+[7]。
 
 ### 8.3 Kimi Linear：复现 KDA 与 DPLR kernel
 
-Kimi Linear Figure 2 使用 `B=1,H=16,D=128` 扫描 2K–64K。表中时间为 A100 上的 p50。
+Kimi Linear Figure 2 使用 `B=1,H=16,D=128` 扫描 2K–64K。被比较对象是利用 KDA 约束
+结构的专用 chunk kernel，基线是表达一般 diagonal-plus-rank-1 transition 的 DPLR chunk
+kernel。表中 `DPLR/KDA` 等于 DPLR 延迟除以 KDA 延迟，时间均为 A100 上的 p50。
 
-| T | DPLR fwd | KDA fwd | KDA speedup | DPLR fwd+bwd | KDA fwd+bwd | KDA speedup |
+| T | DPLR fwd | KDA fwd | DPLR/KDA | DPLR fwd+bwd | KDA fwd+bwd | DPLR/KDA |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 2K | 0.914 | 0.711 | 1.29× | 2.517 | 3.305 | 0.76× |
 | 4K | 1.784 | 0.850 | 2.10× | 4.911 | 3.511 | 1.40× |
@@ -801,19 +815,20 @@ Kimi Linear Figure 2 使用 `B=1,H=16,D=128` 扫描 2K–64K。表中时间为 A
 
 ![KDA 与一般 DPLR 的 kernel 时间](figures/kimi-dplr-kda.png)
 
-从 4K 开始，KDA forward 稳定约为 DPLR 的一半；64K 的 forward 和 forward+backward
-分别快 2.23× 与 1.93×。2K forward+backward 的 KDA 固定准备开销仍占较大比例，因而
-慢于 DPLR；4K 后专用 chunk 公式节省的辅助矩阵和 GEMM 开始占主导。64K 时 KDA 的
-forward 额外峰值为 3080 MiB，DPLR 为 5376 MiB；forward+backward 分别为 7712 与
-11648 MiB。实验同时复现了论文所述约 100% operator efficiency improvement 及其长序列
-稳定区间 [@kimi2025linear]。
+从 4K 开始，KDA forward 稳定约为 DPLR 的一半；64K 时，KDA 的 forward 和
+forward+backward 相对 DPLR 分别快 2.23× 与 1.93×。2K forward+backward 的 KDA 固定
+准备开销仍占较大比例，因而慢于 DPLR；4K 后专用 chunk 公式节省的辅助矩阵和 GEMM
+开始占主导。64K 时 KDA 的 forward 额外峰值为 3080 MiB，DPLR 为 5376 MiB；
+forward+backward 分别为 7712 与
+11648 MiB。实验同时复现了论文所述算子效率约翻倍的长序列趋势及其稳定区间
+[11]。
 
 ### 8.4 MQAR：channel-wise gate 带来的学习效果
 
-| 模型 | 参数量 | 训练吞吐 | step 3500 验证准确率 | step 4000 | step 5000 | step 8000 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| GDN | 2.386M | 201.6K token/s | 0.43% | 0.45% | 0.35% | 0.52% |
-| KDA | 2.517M | 145.1K token/s | 55.41% | 97.22% | 99.29% | 99.88% |
+| 模型 | 参数量 | 训练吞吐 | 最终验证 loss | step 3500 准确率 | step 4000 | step 5000 | step 8000 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| GDN | 2.386M | 201.6K token/s | 5.5511 | 0.43% | 0.45% | 0.35% | 0.52% |
+| KDA | 2.517M | 145.1K token/s | 0.00665 | 55.41% | 97.22% | 99.29% | 99.88% |
 
 ![GDN 与 KDA 的 MQAR 学习曲线](figures/mqar-gdn-kda.png)
 
@@ -822,15 +837,16 @@ forward 额外峰值为 3080 MiB，DPLR 为 5376 MiB；forward+backward 分别�
 学习，3500 step 达到 55.4%，4000 step 达到 97.2%，最后达到 99.88%。KDA 的 per-channel
 decay 可以为同一个 head 内的不同 state 行设置不同记忆寿命，正适合同时维护大量独立
 key-value 映射。代价是本实验中参数量多 5.5%，训练吞吐低约 28%。这组结果复现了 Kimi
-论文合成任务中 KDA 比 GDN 收敛更快的方向 [@kimi2025linear]。
+论文合成任务中 KDA 比 GDN 收敛更快的方向 [11]。
 
 ### 8.5 NSA：64K block-sparse 前向与反向
 
 共同配置为 `B=1,Hq/Hkv=64/4,Dk=Dv=128,BF16`，每个 query 最多选择 16 个大小为
-64 的 block。`selected` 使用预先给定的稀疏索引；`+ selector` 还执行 compression、top-k
-和 selected attention。表中为 p50 ms。
+64 的 block。dense 基线是相同 shape 的 PyTorch Flash SDPA GQA；`selected` 使用预先
+给定的稀疏索引；`compression+selection` 还执行 compression、top-k 和 selected attention。表中为
+p50 ms，所有 NSA speedup 均用 dense SDPA 延迟除以对应 sparse 路径延迟。
 
-| T | dense fwd | selected fwd | + selector fwd | dense fwd+bwd | selected fwd+bwd | + selector fwd+bwd |
+| T | dense fwd | selected fwd | compression+selection fwd | dense fwd+bwd | selected fwd+bwd | compression+selection fwd+bwd |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 8K | 6.566 | 4.316 | 6.751 | 26.219 | 23.291 | 51.517 |
 | 16K | 21.334 | 8.888 | 15.418 | 83.081 | 46.262 | 107.059 |
@@ -839,25 +855,28 @@ key-value 映射。代价是本实验中参数量多 5.5%，训练吞吐低约 2
 
 ![NSA 长序列前向与前反向时间](figures/nsa-long-sequence.png)
 
-`46839` 的 64K 点来自一个 100 ms repeat 窗口；dense backward 单次已经超过该窗口。为此
-另在 A100 节点 `anode02` 上用 1000 ms warmup、6500 ms repeat 重测 64K：
+上表的 64K 点来自 100 ms repeat 窗口，而 dense backward 单次已经超过该窗口。为降低
+短测量窗口带来的波动，又在另一张 A100 上以 1000 ms warmup、6500 ms repeat 重测 64K：
 
-| 64K confirm | dense | selected | + selector | selected speedup | 完整路径 speedup |
+| 64K 长窗口复测 | dense | selected | compression+selection | dense/selected | dense/compression+selection |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | forward | 326.374 | 23.417 | 59.743 | 13.94× | 5.46× |
 | forward+backward | 1131.922 | 139.381 | 332.676 | 8.12× | 3.40× |
 
-两张 A100 上，64K selected forward speedup 落在 9.27×--13.94×，完整路径为
-3.24×--5.46×；forward+backward 分别为 6.91×--8.12× 和 2.57×--3.40×。同型号节点
+两次 A100 测量中，64K selected forward 相对 dense 快 9.27×--13.94×，包含 compression
+和 selector 的路径相对 dense 快 3.24×--5.46×；forward+backward 分别快
+6.91×--8.12× 和
+2.57×--3.40×。同型号节点
 仍会受时钟、共置负载和 Triton autotune 选择影响，因此曲线用于说明扩展趋势，精确回归
 应固定节点并锁定功耗/时钟。两次实验都显示 8K selector 路径接近或慢于 dense，32K 后
-完整前反向开始加速；动态稀疏的主要优化空间已从 selected attention 转移到 compression、
+compression+selection 前反向开始加速；动态稀疏的主要优化空间已从 selected attention 转移到 compression、
 top-k 和 index 生成。
 
-64K forward+backward 的算子额外峰值为：dense 8352 MiB、selected 3104 MiB、selector
-完整路径 7234 MiB。selected kernel 的 activation/gradient 峰值降低 2.69×；compression
+64K forward+backward 的算子额外峰值为：dense 8352 MiB、selected 3104 MiB、
+compression+selection 路径 7234 MiB。selected kernel 的 activation/gradient 峰值降低
+2.69×；compression
 分支和 selector 的中间量会使用其中一部分节省。NSA 原论文同时加入 512-token sliding
-window 和独立分支 gate，本次曲线集中复现 FLA 已公开的 compression/selection 路径。
+window 和独立分支 gate，这组曲线测量的是 FLA 已公开的 compression/selection 路径。
 
 ### 8.6 Profiler：时间花在了哪些 kernel
 
@@ -886,7 +905,7 @@ backward 是 16K selected operator 最重的单个 kernel，约为 dQ 的 3.73 �
 4.09 倍；CSR 准备只占约 0.195 ms。因此下一步优化重点是被多个 query 选择的 KV block
 如何聚合梯度，以及 dK/dV program 的负载均衡。
 
-## 9. 局限、结论与后续问题
+## 9. 结论与研究展望
 
 ### 9.1 主要结论
 
@@ -895,40 +914,43 @@ softmax，通过 tile 与 online softmax 降低 HBM 流量；linear attention �
 state，再用 chunkwise/WY/DPLR 把递推改写为 GEMM；sparse attention 保留显式 KV，通过
 block selector 减少实际配对。
 
-本次复现得到四个直接结论：
+实验得到四个直接结论：
 
-1. **Chunkwise 是 Delta Rule 大规模训练的关键执行形式。** 固定 16384 token 后，head dim
-   128 的 forward+backward speedup 随序列从 512 增至 16K，由 8.99× 增至 40.18×。
-2. **KDA 的约束 DPLR 结构同时提高表达力和 kernel 效率。** 长度 8K–64K 时，KDA
-   forward 约快 2.2×，forward+backward 约快 1.9×；MQAR 上又从 GDN 的随机水平提高到
-   99.88%。
-3. **NSA selected kernel 在长序列上具有明显扩展优势。** 两次 64K 运行中，selected
-   forward 快 9.27×--13.94×，forward+backward 快 6.91×--8.12×，并显著降低
-   activation/gradient 峰值。
-4. **Selector 是动态 sparse 的主要组成部分。** 64K 加入 compression/top-k 后，完整路径
-   forward speedup 为 3.24×--5.46×，仍随序列增长而扩大。
+1. **Chunkwise 是 Delta Rule 训练的关键执行形式。** 固定总 token 数为 16384、head dim
+   为 128 时，chunkwise 前向加反向相对逐 token recurrent 的加速从 512-token 序列上的
+   8.99× 增长到 16K 序列上的 40.18×。
+2. **KDA 的约束 DPLR 结构提高了专用 kernel 的效率。** 在 8K–64K 上，KDA forward
+   相对一般 DPLR kernel 快约 2.2×，forward+backward 快约 1.9×，同时减少长序列下的
+   额外显存。
+3. **Channel-wise decay 提高了关联记忆能力。** 在相同 MQAR 数据与训练设置下，KDA
+   最终验证准确率达到 99.88%，GDN 为 0.52%；KDA 参数量多 5.5%，训练吞吐低约 28%。
+4. **NSA 的长序列收益来自减少实际访问的 KV block。** 64K 时，给定索引的 selected
+   kernel 相对 dense SDPA 的 forward 快 9.27×--13.94×，forward+backward 快
+   6.91×--8.12×。计入 compression 和 top-k 后，compression+selection 路径仍分别快
+   3.24×--5.46× 和
+   2.57×--3.40×。
 
 这些结果也说明 theoretical FLOPs、稀疏率和 wall-clock 各自回答不同问题。GPU 上的最终
 速度由矩阵形状、tile、片上空间、索引、前反向算法和 batch 并行度共同决定。
 
-### 9.2 实验范围
+### 9.2 结果的适用范围
 
-本报告完成了三个层次的复现：FLA reference 对优化 kernel 的前反向正确性；A100 上
-2K–64K 的 operator latency/显存/profiler；两层模型的 MQAR 学习曲线。DeltaNet 1.3B/
-100B-token、Kimi Linear 48B/1.4T 或 5.7T-token、NSA 27B/270B-token 等模型规模结果来自
-原论文 [@yang2024delta; @kimi2025linear; @yuan2025native]。因此本报告自己的“效果”证据
-指向 MQAR，“性能”证据指向固定 FLA commit 和单张 A100；论文的 perplexity、LongBench、
-端到端 TTFT/TPOT 与多机训练数据作为背景结果引用。
+本报告的实验分为三个层次。第一层比较优化 kernel 与参考实现，确认分块和融合以后，前向
+输出、最终 state 和反向梯度仍保持一致。第二层在单张 A100 上测量算子延迟、额外显存和
+kernel 时间构成，结果适用于本文列出的 shape、精度和 FLA 版本。第三层训练两层 GDN/KDA
+模型完成 MQAR，用来观察两种更新规则在关联记忆任务上的学习差异。
 
-NSA 的 A100 复现使用 `Dk=Dv=128`，保留论文的 GQA 比例、block size/count 和长度扫描。
-论文的 `Dk=192,Dv=128` 需要支持该 tile 组合的 FlashAttention/NSA backend。当前 FLA
-A100 路径将 `BK` 上限设为 128；这个兼容点本身也是部署时需要核查的实现条件。
+DeltaNet、Kimi Linear 和 NSA 论文中的十亿级模型训练结果分别来自原论文 [7, 11, 52]。
+这些论文结果说明方法可以扩展到真实语言模型；本文的实测数据则补充说明相应算子在单张
+A100 上如何运行，以及速度差异来自哪些 kernel。NSA 实验采用 $D_k=D_v=128$，因为当前
+A100 kernel 只支持单个不超过 128 的 key tile；其 GQA 比例、block size、selected block
+数和 8K–64K 长度扫描与论文效率设置保持一致。
 
 ### 9.3 后续研究问题
 
 1. **KDA backward：** `chunk_kda_bwd_kernel_wy_dqkg_fused` 与 intra-chunk backward
    占据主要时间，能否通过更好的 tile、recompute 策略或融合减少 HBM 往返？
-2. **Selector 税：** NSA compression、top-k、index packing 各占多少时间？selected block
+2. **选择器开销：** NSA compression、top-k、index packing 各占多少时间？selected block
    数从 4/8/16/32 变化时，质量、selector 与 attention kernel 的最优点在哪里？
 3. **真实 serving：** 在固定 checkpoint 和请求长度分布下，KDA state、NSA sparse KV 和
    dense paged KV 对 TTFT、TPOT、p95、显存与质量形成怎样的 Pareto 前沿？
@@ -937,37 +959,167 @@ A100 路径将 `BK` 上限设为 128；这个兼容点本身也是部署时需�
 5. **模型效果：** 将 MQAR 扩展到 palindrome、stack、不同序列长度和多个学习率，并加入
    matched-parameter GDN，可以进一步定位 channel-wise decay 的收益来源。
 
-### 9.4 74 篇方法图谱（压缩索引）
+### 9.4 文献范围
 
-| 分组 | 方法 |
-| --- | --- |
-| Linear 基础/架构 | Transformers are RNNs、Performer、Fast Weight Programmers、cosFormer、RetNet、GLA、DeltaNet、Mamba-2/SSD、Based、GDN、Kimi Linear、MDN |
-| Linear kernel/并行/量化 | Lightning Attention、LASP、LASP-2、Tiled Flash Linear Attention、Optimized GPU Kernel、GRU sub-8-bit、SSDi8、State Reduction |
-| 经典 sparse | Sparse Transformer、Reformer、Longformer、BigBird、ETC、Sparse Sinkhorn、Routing Transformer、Scatterbrain、LongNet、HyperAttention |
-| Sparse kernel/serving | SpAtten、Sanger、SALO、Dynamic Sparse FlashAttention、FlexAttention、FlashInfer、InfiniGen、LServe |
-| 长上下文 sparse | StreamingLLM、H2O、MInference、QUEST、SparQ、Loki、MagicPIG、RetrievalAttention、SampleAttention、SparseK、HiP、DuoAttention、FlexPrefill、NSA、HiLS、SeerAttention、MoBA、Star Attention、XAttention、UNIQUE |
-| 通用/视觉 sparse | SpargeAttention、AdaSplash、SpargeAttention2、AdaSplash-2、Sparsifiner、FPSAttention、DFSAttn、DSV、FG-Attn、VSA、Sparse VideoGen2、db-SP |
-| Exact dense baseline | FlashAttention、FlashAttention-2、FlashAttention-3、FlashAttention-4 |
+| 分组 | 文献编号 | 代表内容 |
+| --- | --- | --- |
+| Linear attention 基础与架构 | [1]–[12] | 核特征、fast weight、GLA、DeltaNet、SSD、GDN、KDA |
+| Linear kernel、并行与量化 | [13]–[20] | Lightning Attention、LASP、tiled kernel、低比特和 state reduction |
+| 经典 sparse attention | [21]–[30] | 固定稀疏、LSH、routing、低秩与稀疏结合 |
+| Sparse kernel 与 serving | [31]–[38] | 稀疏硬件、动态 kernel、FlexAttention、FlashInfer、LServe |
+| 长上下文 sparse attention | [39]–[58] | KV 筛选、动态 prefill、NSA、MoBA、HiLS 等 |
+| 视觉与视频 sparse attention | [59]–[70] | 在线过滤、可训练稀疏、视频生成和序列并行 |
+| Exact dense baseline | [71]–[74] | FlashAttention 1–4 |
+| Linear attention serving 工程资料 | [75] | ReplaySSM decode 数据流 |
 
-## 参考文献说明
+## 参考文献
 
-本文使用 Pandoc 风格 citation key，例如 `[@dao2022flashattention]`。完整 74 篇学术论文
-的作者、题目、年份、venue、DOI/URL 见
-[`references/attention.bib`](https://github.com/Huasushis/sparse-linear-attention/blob/study/sparse-linear-attention/references/attention.bib)；
-分类和精读等级见
-[`study/PAPER_MAP.md`](https://github.com/Huasushis/sparse-linear-attention/blob/study/sparse-linear-attention/study/PAPER_MAP.md)。核心引用包括：
+[1] Katharopoulos A., Vyas A., Pappas N., et al. Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention. *Proceedings of the 37th International Conference on Machine Learning*, 2020. [链接](https://proceedings.mlr.press/v119/katharopoulos20a.html)
 
-- `katharopoulos2020transformers`、`choromanski2021rethinking`；
-- `yang2024gated`、`yang2024delta`、`dao2024transformers`、`yang2025gated`、
-  `kimi2025linear`；
-- `dao2022flashattention`、`dao2024flashattention2`、`shah2024flashattention3`、
-  `zadouri2026flashattention4`；
-- `jiang2024minference`、`yuan2025native`、`lu2025moba`、`zhang2025spargeattention`、
-  `hu2026hils`；
-- `dong2025flexattention`、`ye2025flashinfer`、`yang2025lserve`；
-- `xiao2024streamingllm`、`zhang2023h2o`、`tang2024quest`、`ribar2024sparq`、
-  `singhania2024loki`。
+[2] Choromanski K., Likhosherstov V., Dohan D., et al. Rethinking Attention with Performers. *International Conference on Learning Representations*, 2021. [链接](https://openreview.net/forum?id=Ua6zuk0WRH)
 
-## 致谢
+[3] Schlag I., Irie K., Schmidhuber J. Linear Transformers Are Secretly Fast Weight Programmers. *Proceedings of the 38th International Conference on Machine Learning*, 2021. [链接](https://proceedings.mlr.press/v139/schlag21a.html)
 
-感谢中国科学技术大学孙经纬老师的指导，以及 107 本科生算力平台提供的 GPU 资源。
+[4] Hua W., Dai Z., Liu H., et al. Transformer Quality in Linear Time. *Proceedings of the 39th International Conference on Machine Learning*, 2022. [链接](https://proceedings.mlr.press/v162/hua22a.html)
+
+[5] Sun Y., Dong L., Huang S., et al. Retentive Network: A Successor to Transformer for Large Language Models. *arXiv:2307.08621*, 2023. [链接](https://arxiv.org/abs/2307.08621)
+
+[6] Yang S., Wang B., Shen Y., et al. Gated Linear Attention Transformers with Hardware-Efficient Training. *Proceedings of the 41st International Conference on Machine Learning*, 2024. [链接](https://proceedings.mlr.press/v235/yang24ab.html)
+
+[7] Yang S., Wang B., Zhang Y., et al. Parallelizing Linear Transformers with the Delta Rule over Sequence Length. *Advances in Neural Information Processing Systems*, 2024. [链接](https://arxiv.org/abs/2406.06484)
+
+[8] Dao T., Gu A. Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality. *Proceedings of the 41st International Conference on Machine Learning*, 2024. [链接](https://proceedings.mlr.press/v235/dao24a.html)
+
+[9] Arora S., Eyuboglu S., Zhang M., et al. Simple Linear Attention Language Models Balance the Recall--Throughput Tradeoff. *Proceedings of the 41st International Conference on Machine Learning*, 2024. [链接](https://proceedings.mlr.press/v235/arora24a.html)
+
+[10] Yang S., Kautz J., Hatamizadeh A. Gated Delta Networks: Improving Mamba2 with Delta Rule. *The Thirteenth International Conference on Learning Representations*, 2025. [链接](https://openreview.net/forum?id=r8H7xhYPwz)
+
+[11] Zhang Y., Lin Z., Yao X., et al. Kimi Linear: An Expressive, Efficient Attention Architecture. *arXiv:2510.26692*, 2025. [链接](https://arxiv.org/abs/2510.26692)
+
+[12] Huang Y., Liu X., Huang H., et al. MDN: Parallelizing Stepwise Momentum for Delta Linear Attention. *arXiv:2605.05838*, 2026. [链接](https://arxiv.org/abs/2605.05838)
+
+[13] Qin Z., Sun W., Li D., et al. Various Lengths, Constant Speed: Efficient Language Modeling with Lightning Attention. *Proceedings of the 41st International Conference on Machine Learning*, 2024. [链接](https://proceedings.mlr.press/v235/qin24c.html)
+
+[14] Sun W., Qin Z., Li D., et al. LASP: Linear Attention Sequence Parallelism. *Transactions on Machine Learning Research*, 2025. [链接](https://openreview.net/forum?id=gG8sQUUtN7)
+
+[15] Sun W., Lan D., Zhong Y., et al. LASP-2: Rethinking Sequence Parallelism for Linear Attention and Its Hybrid. *arXiv:2502.07563*, 2025. [链接](https://arxiv.org/abs/2502.07563)
+
+[16] Beck M., Poppel K., Lippe P., et al. Tiled Flash Linear Attention: More Efficient Linear RNN and xLSTM Kernels. *Advances in Neural Information Processing Systems*, 2025. [链接](https://proceedings.neurips.cc/paper_files/paper/2025/hash/6cb81234ab47027e991728ed7dd76735-Abstract-Conference.html)
+
+[17] Gerami A., Duraiswami R. Transformer Based Linear Attention with Optimized GPU Kernel Implementation. *arXiv:2510.21956*, 2025. [链接](https://arxiv.org/abs/2510.21956)
+
+[18] Miccini R., Cerioli A., Laroche C., et al. Towards a Tailored Mixed-Precision Sub-8-Bit Quantization Scheme for Gated Recurrent Units Using Genetic Algorithms. *tinyML Research Symposium*, 2024. [链接](https://arxiv.org/abs/2402.12263)
+
+[19] Kim H., Ko B., Kang M., et al. SSDi8: Accurate and Efficient 8-bit Quantization for State Space Duality. *The Fourteenth International Conference on Learning Representations*, 2026. [链接](https://openreview.net/forum?id=pjMDZJd4rT)
+
+[20] Nazari P., Rusch T. K. The Key to State Reduction in Linear Attention: A Rank-Based Perspective. *arXiv:2602.04852*, 2026. [链接](https://arxiv.org/abs/2602.04852)
+
+[21] Child R., Gray S., Radford A., et al. Generating Long Sequences with Sparse Transformers. *arXiv:1904.10509*, 2019. [链接](https://arxiv.org/abs/1904.10509)
+
+[22] Kitaev N., Kaiser L., Levskaya A. Reformer: The Efficient Transformer. *International Conference on Learning Representations*, 2020. [链接](https://arxiv.org/abs/2001.04451)
+
+[23] Beltagy I., Peters M. E., Cohan A. Longformer: The Long-Document Transformer. *arXiv:2004.05150*, 2020. [链接](https://arxiv.org/abs/2004.05150)
+
+[24] Zaheer M., Guruganesh G., Dubey K. A., et al. Big Bird: Transformers for Longer Sequences. *Advances in Neural Information Processing Systems*, 2020. [链接](https://arxiv.org/abs/2007.14062)
+
+[25] Ainslie J., Ontanon S., Alberti C., et al. ETC: Encoding Long and Structured Inputs in Transformers. *Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing*, 2020. [链接](https://aclanthology.org/2020.emnlp-main.19/)
+
+[26] Tay Y., Bahri D., Yang L., et al. Sparse Sinkhorn Attention. *Proceedings of the 37th International Conference on Machine Learning*, 2020. [链接](https://proceedings.mlr.press/v119/tay20a.html)
+
+[27] Roy A., Saffar M., Vaswani A., et al. Efficient Content-Based Sparse Attention with Routing Transformers. *Transactions of the Association for Computational Linguistics*, 2021. [链接](https://aclanthology.org/2021.tacl-1.4/)
+
+[28] Chen B., Dao T., Winsor E., et al. Scatterbrain: Unifying Sparse and Low-Rank Attention Approximation. *Advances in Neural Information Processing Systems*, 2021. [链接](https://proceedings.neurips.cc/paper/2021/hash/9185f3ec501c674c7c788464a36e7fb3-Abstract.html)
+
+[29] Ding J., Ma S., Dong L., et al. LongNet: Scaling Transformers to 1,000,000,000 Tokens. *arXiv:2307.02486*, 2023. [链接](https://arxiv.org/abs/2307.02486)
+
+[30] Han I., Jayaram R., Karbasi A., et al. HyperAttention: Long-Context Attention in Near-Linear Time. *The Twelfth International Conference on Learning Representations*, 2024. [链接](https://arxiv.org/abs/2310.05869)
+
+[31] Wang H., Zhang Z., Han S. SpAtten: Efficient Sparse Attention Architecture with Cascade Token and Head Pruning. *IEEE International Symposium on High-Performance Computer Architecture*, 2021. [链接](https://ieeexplore.ieee.org/document/9407232/)
+
+[32] Lu L., Jin Y., Bi H., et al. Sanger: A Co-Design Framework for Enabling Sparse Attention Using Reconfigurable Architecture. *IEEE/ACM International Symposium on Microarchitecture*, 2021. [链接](https://doi.org/10.1145/3466752.3480125)
+
+[33] Shen G., Zhao J., Chen Q., et al. SALO: An Efficient Spatial Accelerator Enabling Hybrid Sparse Attention Mechanisms for Long Sequences. *ACM/IEEE Design Automation Conference*, 2022. [链接](https://doi.org/10.1145/3489517.3530504)
+
+[34] Pagliardini M., Paliotta D., Jaggi M., et al. Fast Attention over Long Sequences with Dynamic Sparse Flash Attention. *Advances in Neural Information Processing Systems*, 2023. [链接](https://proceedings.neurips.cc/paper_files/paper/2023/hash/bc222e8153a49c1b30a1b8ba96b35117-Abstract-Conference.html)
+
+[35] Dong J., Feng B., Guessous D., et al. FlexAttention: A Programming Model for Generating Fused Attention Variants. *Proceedings of Machine Learning and Systems*, 2025. [链接](https://proceedings.mlsys.org/paper_files/paper/2025/hash/61a9278dfef5f871b5e472389f8d6fa1-Abstract-Conference.html)
+
+[36] Ye Z., Chen L., Lai R., et al. FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving. *Proceedings of Machine Learning and Systems*, 2025. [链接](https://proceedings.mlsys.org/paper_files/paper/2025/hash/dbf02b21d77409a2db30e56866a8ab3a-Abstract-Conference.html)
+
+[37] Lee W., Lee J., Seo J., et al. InfiniGen: Efficient Generative Inference of Large Language Models with Dynamic KV Cache Management. *18th USENIX Symposium on Operating Systems Design and Implementation*, 2024. [链接](https://www.usenix.org/conference/osdi24/presentation/lee)
+
+[38] Yang S., Guo J., Tang H., et al. LServe: Efficient Long-Sequence LLM Serving with Unified Sparse Attention. *Proceedings of Machine Learning and Systems*, 2025. [链接](https://arxiv.org/abs/2502.14866)
+
+[39] Xiao G., Tian Y., Chen B., et al. Efficient Streaming Language Models with Attention Sinks. *The Twelfth International Conference on Learning Representations*, 2024. [链接](https://arxiv.org/abs/2309.17453)
+
+[40] Zhang Z., Sheng Y., Zhou T., et al. H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. *Advances in Neural Information Processing Systems*, 2023. [链接](https://arxiv.org/abs/2306.14048)
+
+[41] Jiang H., Li Y., Zhang C., et al. MInference 1.0: Accelerating Pre-Filling for Long-Context LLMs via Dynamic Sparse Attention. *Advances in Neural Information Processing Systems*, 2024. [链接](https://proceedings.neurips.cc/paper_files/paper/2024/hash/5dfbe6f5671e82c76841ba687a8a9ecb-Abstract-Conference.html)
+
+[42] Tang J., Zhao Y., Zhu K., et al. QUEST: Query-Aware Sparsity for Efficient Long-Context LLM Inference. *Proceedings of the 41st International Conference on Machine Learning*, 2024. [链接](https://proceedings.mlr.press/v235/tang24l.html)
+
+[43] Ribar L., Chelombiev I., Hudlass-Galley L., et al. SparQ Attention: Bandwidth-Efficient LLM Inference. *Proceedings of the 41st International Conference on Machine Learning*, 2024. [链接](https://proceedings.mlr.press/v235/ribar24a.html)
+
+[44] Singhania P., Singh S., He S., et al. Loki: Low-Rank Keys for Efficient Sparse Attention. *Advances in Neural Information Processing Systems*, 2024. [链接](https://arxiv.org/abs/2406.02542)
+
+[45] Chen Z., Sadhukhan R., Ye Z., et al. MagicPIG: LSH Sampling for Efficient LLM Generation. *The Thirteenth International Conference on Learning Representations*, 2025. [链接](https://openreview.net/forum?id=ALzTQUgW8a)
+
+[46] Liu D., Chen M., Lu B., et al. RetrievalAttention: Accelerating Long-Context LLM Inference via Vector Retrieval. *arXiv:2409.10516*, 2024. [链接](https://arxiv.org/abs/2409.10516)
+
+[47] Zhu Q., Duan J., Chen C., et al. SampleAttention: Near-Lossless Acceleration of Long-Context LLM Inference with Adaptive Structured Sparse Attention. *arXiv:2406.15486*, 2024. [链接](https://arxiv.org/abs/2406.15486)
+
+[48] Lou C., Jia Z., Zheng Z., et al. Sparser Is Faster and Less Is More: Efficient Sparse Attention for Long-Range Transformers. *arXiv:2406.16747*, 2024. [链接](https://arxiv.org/abs/2406.16747)
+
+[49] Lee H., Park G., Lee Y., et al. A Training-Free Sub-Quadratic Cost Transformer Model Serving Framework with Hierarchically Pruned Attention. *The Thirteenth International Conference on Learning Representations*, 2025. [链接](https://openreview.net/forum?id=PTcMzQgKmn)
+
+[50] Xiao G., Tang J., Zuo J., et al. DuoAttention: Efficient Long-Context LLM Inference with Retrieval and Streaming Heads. *The Thirteenth International Conference on Learning Representations*, 2025. [链接](https://openreview.net/forum?id=cFu7ze7xUm)
+
+[51] Lai X., Lu J., Luo Y., et al. FlexPrefill: A Context-Aware Sparse Attention Mechanism for Efficient Long-Sequence Inference. *The Thirteenth International Conference on Learning Representations*, 2025. [链接](https://openreview.net/forum?id=r5GJDVJHmr)
+
+[52] Yuan J., Gao H., Dai D., et al. Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention. *arXiv:2502.11089*, 2025. [链接](https://arxiv.org/abs/2502.11089)
+
+[53] Gao Y., Zeng Z., Du D., et al. SeerAttention: Self-Distilled Attention Gating for Efficient Long-Context Prefilling. *Advances in Neural Information Processing Systems*, 2025. [链接](https://proceedings.neurips.cc/paper_files/paper/2025/hash/50e9dbc4ab68d94f15261ddc26c8ca2b-Abstract-Conference.html)
+
+[54] Lu E., Jiang Z., Liu J., et al. MoBA: Mixture of Block Attention for Long-Context LLMs. *arXiv:2502.13189*, 2025. [链接](https://arxiv.org/abs/2502.13189)
+
+[55] Acharya S., Jia F., Ginsburg B. Star Attention: Efficient LLM Inference over Long Sequences. *Proceedings of the 42nd International Conference on Machine Learning*, 2025. [链接](https://proceedings.mlr.press/v267/acharya25a.html)
+
+[56] Xu R., Xiao G., Huang H., et al. XAttention: Block Sparse Attention with Antidiagonal Scoring. *Proceedings of the 42nd International Conference on Machine Learning*, 2025. [链接](https://arxiv.org/abs/2503.16428)
+
+[57] Deng K., Ling S., Fan R., et al. UNIQUE: Universal Top-K Sparse Attention for Training-Free Inference and Sparsity-Aware Training. *arXiv:2605.27740*, 2026. [链接](https://arxiv.org/abs/2605.27740)
+
+[58] Hu X., Wei X., Gu H., et al. Hierarchical Sparse Attention Done Right: Toward Infinite Context Modeling. *arXiv:2607.02980*, 2026. [链接](https://arxiv.org/abs/2607.02980)
+
+[59] Zhang J., Xiang C., Huang H., et al. SpargeAttention: Accurate and Training-free Sparse Attention Accelerating Any Model Inference. *Proceedings of the 42nd International Conference on Machine Learning*, 2025. [链接](https://proceedings.mlr.press/v267/zhang25ch.html)
+
+[60] Goncalves N., Treviso M., Martins A. F. T. AdaSplash: Adaptive Sparse Flash Attention. *Proceedings of the 42nd International Conference on Machine Learning*, 2025. [链接](https://proceedings.mlr.press/v267/goncalves25a.html)
+
+[61] Zhang J., Jiang K., Xiang C., et al. SpargeAttention2: Trainable Sparse Attention via Hybrid Top-K+Top-P Masking and Distillation Fine-Tuning. *arXiv:2602.13515*, 2026. [链接](https://arxiv.org/abs/2602.13515)
+
+[62] Goncalves N., Pitorro H., Niculae V., et al. AdaSplash-2: Faster Differentiable Sparse Attention. *arXiv:2604.15180*, 2026. [链接](https://arxiv.org/abs/2604.15180)
+
+[63] Wei C., Duke B., Jiang R., et al. Sparsifiner: Learning Sparse Instance-Dependent Attention for Efficient Vision Transformers. *IEEE/CVF Conference on Computer Vision and Pattern Recognition*, 2023. [链接](https://doi.org/10.1109/CVPR52729.2023.02172)
+
+[64] Liu A., Zhang Z., Li Z., et al. FPSAttention: Training-Aware FP8 and Sparsity Co-Design for Fast Video Diffusion. *arXiv:2506.04648*, 2025. [链接](https://arxiv.org/abs/2506.04648)
+
+[65] Hu J., Gao Z., He Y., et al. DFSAttn: Dynamic Fine-Grained Sparse Attention for Efficient Video Generation. *arXiv:2605.23445*, 2026. [链接](https://arxiv.org/abs/2605.23445)
+
+[66] Tan X., Chen Y., Jiang Y., et al. DSV: Exploiting Dynamic Sparsity to Accelerate Large-Scale Video DiT Training. *Proceedings of the 31st ACM International Conference on Architectural Support for Programming Languages and Operating Systems*, 2026. [链接](https://arxiv.org/abs/2502.07590)
+
+[67] Durvasula S., Sreedhar K., Moustafa Z., et al. FG-Attn: Leveraging Fine-Grained Sparse Attention in Video Diffusion Models. *arXiv:2509.16518*, 2025. [链接](https://arxiv.org/abs/2509.16518)
+
+[68] Zhang P., Chen Y., Huang H., et al. VSA: Faster Video Diffusion with Trainable Sparse Attention. *arXiv:2505.13389*, 2025. [链接](https://arxiv.org/abs/2505.13389)
+
+[69] Yang S., Xi H., Zhao Y., et al. Sparse VideoGen2: Accelerating Video Generation with Sparse Attention via Semantic-Aware Permutation. *arXiv:2505.18875*, 2025. [链接](https://arxiv.org/abs/2505.18875)
+
+[70] Chen S., Hong K., Zhao T., et al. db-SP: Accelerating Sparse Attention for Visual Generative Models with Dual-Balanced Sequence Parallelism. *arXiv:2511.23113*, 2025. [链接](https://arxiv.org/abs/2511.23113)
+
+[71] Dao T., Fu D. Y., Ermon S., et al. FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. *Advances in Neural Information Processing Systems*, 2022. [链接](https://proceedings.neurips.cc/paper_files/paper/2022/hash/67d57c32e20fd0a7a302cb81d36e40d5-Abstract-Conference.html)
+
+[72] Dao T. FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning. *The Twelfth International Conference on Learning Representations*, 2024. [链接](https://arxiv.org/abs/2307.08691)
+
+[73] Shah J., Bikshandi G., Zhang Y., et al. FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-Precision. *Advances in Neural Information Processing Systems*, 2024. [链接](https://proceedings.neurips.cc/paper_files/paper/2024/hash/7ede97c3e082c6df10a8d6103a2eebd2-Abstract-Conference.html)
+
+[74] Zadouri T., Hoehnerbach M., Shah J., et al. FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling. *Proceedings of Machine Learning and Systems*, 2026. [链接](https://arxiv.org/abs/2603.05451)
+
+[75] Dao T. ReplaySSM: Cache SSM Inputs, Not State. *Tri Dao's Blog*, 2026. [链接](https://tridao.me/blog/2026/replayssm/)
